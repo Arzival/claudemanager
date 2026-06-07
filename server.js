@@ -105,6 +105,8 @@ function closeSession(id) {
   try { s.proc && s.proc.kill(); } catch {}
   sessions.delete(id);
   buffers.delete(id);
+  config.sessions = (config.sessions || []).filter(c => c.id !== id);
+  saveConfig();
   broadcast({ type: 'session-removed', sessionId: id });
 }
 
@@ -186,6 +188,8 @@ wss.on('connection', (ws) => {
       const s = sessions.get(sessionId);
       if (s && s.proc && s.status === 'running') {
         try { s.proc.resize(msg.cols, msg.rows); } catch {}
+        const saved = (config.sessions || []).find(c => c.id === sessionId);
+        if (saved) { saved.cols = msg.cols; saved.rows = msg.rows; saveConfig(); }
       }
     } else if (type === 'detect-claude') {
       ws.send(JSON.stringify({ type: 'detected-claude', path: detectClaude() }));
@@ -251,6 +255,9 @@ wss.on('connection', (ws) => {
       const cfg = { id, name: projectName, toolId: toolId || config.defaultTool, command, args, cwd: projectPath, cols: msg.cols || 80, rows: msg.rows || 24 };
       buffers.set(id, []);
       spawnSession(cfg);
+      if (!config.sessions) config.sessions = [];
+      config.sessions.push({ id, name: cfg.name, command: cfg.command, args: cfg.args, cwd: cfg.cwd, cols: cfg.cols, rows: cfg.rows, toolId: cfg.toolId });
+      saveConfig();
       broadcast({ type: 'session-added', session: { id, name: cfg.name, cwd: cfg.cwd, status: 'running', cols: cfg.cols, rows: cfg.rows } });
 
       // Fallback for tools without addDirFlag: send context as text
