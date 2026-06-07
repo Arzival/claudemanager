@@ -25,7 +25,8 @@ if [ "$OS" = "Darwin" ]; then
 
     <key>ProgramArguments</key>
     <array>
-        <string>${PROJECT_DIR}/scripts/start.sh</string>
+        <string>${NODE_BIN}</string>
+        <string>${PROJECT_DIR}/server.js</string>
     </array>
 
     <key>WorkingDirectory</key>
@@ -47,6 +48,8 @@ if [ "$OS" = "Darwin" ]; then
     <dict>
         <key>HOME</key>
         <string>${HOME}</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 </dict>
 </plist>
