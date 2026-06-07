@@ -4,7 +4,8 @@ set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 NODE_BIN="$(which node)"
-LOG_DIR="$PROJECT_DIR/logs"
+# Use ~/Library/Logs for launchd — Documents/ has TCC restrictions on macOS 13+
+LOG_DIR="$HOME/Library/Logs/claudemanager"
 OS="$(uname -s)"
 
 # ── macOS ─────────────────────────────────────────────────────────────────────
