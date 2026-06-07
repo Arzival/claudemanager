@@ -492,7 +492,7 @@ function applyWorkspace(name) {
         p.style.width  = (ws.layout[id].w * W) + 'px';
         p.style.height = (ws.layout[id].h * H) + 'px';
       }
-      setTimeout(() => { try { fits[id]?.fit(); } catch {} }, 60);
+      setTimeout(() => { debouncedFit(id, 0); try { terms[id]?.scrollToBottom(); } catch {}; }, 80);
     } else {
       p.dataset.hidden = '1';
       p.style.visibility = 'hidden'; p.style.pointerEvents = 'none';
@@ -594,6 +594,12 @@ function renderChips() {
 function clearContexts() { contextPaths.length = 0; renderChips(); }
 let zTop = 10;
 
+const fitTimers = {};
+function debouncedFit(id, delay = 80) {
+  clearTimeout(fitTimers[id]);
+  fitTimers[id] = setTimeout(() => { try { fits[id]?.fit(); } catch {} }, delay);
+}
+
 // ── Canvas height: expand to fit all panels ───────────────────
 function updateCanvasHeight() {
   const panels = [...canvas.querySelectorAll('.panel')];
@@ -629,10 +635,8 @@ function applyLayout(panel, lay) {
 function snap(v) { return Math.round(v * 100) / 100; }
 
 // ── Refit ─────────────────────────────────────────────────────
-let refitT;
 function scheduleRefit() {
-  clearTimeout(refitT);
-  refitT = setTimeout(() => Object.values(fits).forEach(f => { try { f.fit(); } catch {} }), 80);
+  Object.keys(fits).forEach(id => debouncedFit(id, 80));
 }
 
 // Raise panel to top
@@ -745,6 +749,7 @@ function buildPanel(s, lay) {
 
   // Terminal
   const term = new Terminal({
+    cols: s.cols || 80, rows: s.rows || 24,
     theme:{background:'#090916',foreground:'#b0c8dc',cursor:'#00f5ff',cursorAccent:'#090916',
       selectionBackground:'rgba(0,245,255,.18)',black:'#090916',red:'#ff006e',green:'#39ff14',
       yellow:'#ffd60a',blue:'#0080ff',magenta:'#bf00ff',cyan:'#00f5ff',white:'#a0b4c8',
@@ -754,9 +759,14 @@ function buildPanel(s, lay) {
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  term.open(document.getElementById(`tw-${s.id}`));
-  requestAnimationFrame(() => { try { fit.fit(); } catch {} });
+  const twEl = document.getElementById(`tw-${s.id}`);
+  void twEl.offsetHeight; // force layout before open so xterm measures correct char dimensions
+  term.open(twEl);
   terms[s.id] = term; fits[s.id] = fit;
+  try { fit.fit(); } catch {}
+  requestAnimationFrame(() => debouncedFit(s.id, 0));
+  // Extra deferred fits: cover cases where DOM isn't fully painted on first render
+  [80, 300, 900].forEach(d => setTimeout(() => { try { fits[s.id]?.fit(); } catch {} }, d));
 
   term.onData(data => ws.send(JSON.stringify({ type:'input', sessionId:s.id, data })));
   term.onResize(({cols,rows}) => ws.send(JSON.stringify({ type:'resize', sessionId:s.id, cols, rows })));
@@ -764,10 +774,27 @@ function buildPanel(s, lay) {
     if (e.ctrlKey && e.key==='k' && e.type==='keydown') { term.clear(); return false; }
     return true;
   });
-  new ResizeObserver(() => { try { fit.fit(); } catch {} }).observe(document.getElementById(`tw-${s.id}`));
+  new ResizeObserver(() => debouncedFit(s.id)).observe(twEl);
+
+  // Click anywhere on terminal wrapper → focus xterm so paste always works
+  twEl.addEventListener('click', () => term.focus());
+
+  // Image paste: intercept clipboard images, save to server temp file, paste path into terminal
+  twEl.addEventListener('paste', e => {
+    const items = Array.from(e.clipboardData?.items || []);
+    const imgItem = items.find(it => it.type.startsWith('image/'));
+    if (!imgItem) return;
+    e.preventDefault(); e.stopPropagation();
+    const reader = new FileReader();
+    reader.onload = () => ws.send(JSON.stringify({ type:'paste-image', sessionId:s.id, data:reader.result }));
+    reader.readAsDataURL(imgItem.getAsFile());
+  });
 }
 
 new ResizeObserver(() => { updateCanvasHeight(); scheduleRefit(); }).observe(gridWrap);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) setTimeout(scheduleRefit, 100);
+});
 
 // ── Dot helpers ───────────────────────────────────────────────
 function setDot(id, st) {
@@ -876,12 +903,19 @@ function selectTech(idx, el) {
 }
 document.getElementById('btn-launch').addEventListener('click', () => {
   if (!selectedProject) return;
+  // Calculate expected terminal size so PTY spawns at correct dimensions from the start
+  const W = gridWrap.clientWidth, H = gridWrap.clientHeight;
+  const panelW = 0.45 * W - 8;  // w:0.45 minus .tw padding
+  const panelH = 0.45 * H - 32; // h:0.45 minus header + .tw padding
+  const cols = Math.max(80, Math.floor(panelW / 7.8));   // Courier New 13px ≈ 7.8px wide
+  const rows = Math.max(24, Math.floor(panelH / 15.6));  // 13px font × 1.2 line-height
   ws.send(JSON.stringify({ type:'open', projectPath:selectedProject.path,
     projectName:selectedProject.name,
     toolId:        selectedToolId,
     resume:        document.getElementById('chk-resume').checked,
     dangerousSkip: document.getElementById('chk-danger').checked,
-    contextPaths:  contextPaths.map(c => c.path) }));
+    contextPaths:  contextPaths.map(c => c.path),
+    cols, rows }));
   pickOv.classList.remove('open');
 });
 
@@ -918,6 +952,27 @@ ws.addEventListener('message', ev => {
       saveWsStore();
     }
     renderWsBar();
+    // After panels are built (with correct layout via getSavedLayout), just show/hide per workspace.
+    // Don't re-apply layout or re-fit — buildPanel already did it correctly.
+    if (wsStore.active && Object.keys(wsStore.workspaces).length) {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const activeWs = wsStore.workspaces[wsStore.active];
+        if (!activeWs) return;
+        canvas.querySelectorAll('.panel').forEach(p => {
+          const id = p.dataset.id;
+          if (activeWs.panelIds.includes(id)) {
+            delete p.dataset.hidden;
+            p.style.visibility = ''; p.style.pointerEvents = '';
+            try { terms[id]?.scrollToBottom(); } catch {}
+          } else {
+            p.dataset.hidden = '1';
+            p.style.visibility = 'hidden'; p.style.pointerEvents = 'none';
+          }
+        });
+        updateCanvasHeight();
+        [0, 100, 400, 1200].forEach(d => setTimeout(scheduleRefit, d));
+      }));
+    }
 
   } else if (msg.type === 'session-added') {
     statuses[msg.session.id]=msg.session.status;
@@ -984,6 +1039,10 @@ ws.addEventListener('message', ev => {
       if (document.getElementById('tool-form').style.display !== 'none' && !tfCmd.value)
         tfCmd.value = msg.path;
     } else alert('claude no encontrado — ingresa la ruta manualmente');
+
+  } else if (msg.type === 'image-pasted') {
+    const t = terms[msg.sessionId];
+    if (t) t.paste(msg.path);
 
   } else if (msg.type === 'reload') {
     location.reload();

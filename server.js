@@ -65,11 +65,11 @@ function broadcast(msg) {
 }
 
 function spawnSession(cfg) {
-  const { id, name, command, args = [], cwd } = cfg;
+  const { id, name, command, args = [], cwd, cols = 80, rows = 24 } = cfg;
   let proc;
   try {
     proc = pty.spawn(command, args, {
-      name: IS_WIN ? 'windows-ansi' : 'xterm-256color', cols: 120, rows: 30,
+      name: IS_WIN ? 'windows-ansi' : 'xterm-256color', cols, rows,
       cwd: fs.existsSync(cwd) ? cwd : process.cwd(),
       env: {
         ...process.env,
@@ -165,7 +165,7 @@ wss.on('connection', (ws) => {
     if (type === 'list') {
       const list = [];
       for (const [id, s] of sessions)
-        list.push({ id, name: s.name, cwd: s.cwd, status: s.status });
+        list.push({ id, name: s.name, cwd: s.cwd, status: s.status, cols: s.cols || 80, rows: s.rows || 24 });
       ws.send(JSON.stringify({ type: 'sessions', sessions: list }));
       for (const [id, buf] of buffers)
         if (buf.length) ws.send(JSON.stringify({ type: 'output', sessionId: id, data: buf.join('') }));
@@ -219,6 +219,15 @@ wss.on('connection', (ws) => {
       saveConfig();
       broadcast({ type: 'tools-updated', tools: config.tools, defaultTool: config.defaultTool });
 
+    } else if (type === 'paste-image') {
+      try {
+        const m = (msg.data || '').match(/^data:image\/(\w+);base64,(.+)$/s);
+        if (!m) return;
+        const tmpPath = path.join(require('os').tmpdir(), `cm_paste_${Date.now()}.${m[1]}`);
+        fs.writeFileSync(tmpPath, Buffer.from(m[2], 'base64'));
+        ws.send(JSON.stringify({ type:'image-pasted', sessionId:msg.sessionId, path:tmpPath }));
+      } catch(err) { console.error('[paste-image]', err.message); }
+
     } else if (type === 'delete-tool') {
       config.tools = (config.tools || []).filter(t => t.id !== msg.toolId);
       if (config.defaultTool === msg.toolId) config.defaultTool = config.tools[0]?.id || '';
@@ -237,10 +246,10 @@ wss.on('connection', (ws) => {
         contextPaths.forEach(p => args.push(tool.addDirFlag, p));
       }
       const command = tool?.command || config.claudePath;
-      const cfg = { id, name: projectName, toolId: toolId || config.defaultTool, command, args, cwd: projectPath };
+      const cfg = { id, name: projectName, toolId: toolId || config.defaultTool, command, args, cwd: projectPath, cols: msg.cols || 80, rows: msg.rows || 24 };
       buffers.set(id, []);
       spawnSession(cfg);
-      broadcast({ type: 'session-added', session: { id, name: cfg.name, cwd: cfg.cwd, status: 'running' } });
+      broadcast({ type: 'session-added', session: { id, name: cfg.name, cwd: cfg.cwd, status: 'running', cols: cfg.cols, rows: cfg.rows } });
 
       // Fallback for tools without addDirFlag: send context as text
       if (contextPaths && contextPaths.length > 0 && !tool?.addDirFlag) {
