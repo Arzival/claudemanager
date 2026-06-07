@@ -74,6 +74,8 @@ function spawnSession(cfg) {
       env: {
         ...process.env,
         HOME: process.env.HOME || process.env.USERPROFILE || '',
+        LANG: process.env.LANG || 'en_US.UTF-8',
+        LC_ALL: process.env.LC_ALL || 'en_US.UTF-8',
       },
     });
   } catch (err) {

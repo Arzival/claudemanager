@@ -704,6 +704,19 @@ function initResizeHandle(panel, rh, dirs) {
   });
 }
 
+// xterm.js delivers selection as Latin-1 encoded bytes (each byte as a char code ≤ 255).
+// Decode those bytes as UTF-8 so Spanish/special chars paste correctly.
+// If the string already contains proper Unicode (code points > 255), return it unchanged.
+function decodeXtermSelection(sel) {
+  if (!sel) return sel;
+  if ([...sel].some(c => c.codePointAt(0) > 255)) return sel;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(
+      Uint8Array.from(sel, c => c.charCodeAt(0))
+    );
+  } catch { return sel; }
+}
+
 // ── Build panel ───────────────────────────────────────────────
 function buildPanel(s, lay) {
   lay = getSavedLayout(s.id) || lay;
@@ -771,7 +784,12 @@ function buildPanel(s, lay) {
   term.onData(data => ws.send(JSON.stringify({ type:'input', sessionId:s.id, data })));
   term.onResize(({cols,rows}) => ws.send(JSON.stringify({ type:'resize', sessionId:s.id, cols, rows })));
   term.attachCustomKeyEventHandler(e => {
-    if (e.ctrlKey && e.key==='k' && e.type==='keydown') { term.clear(); return false; }
+    if (e.type !== 'keydown') return true;
+    if (e.ctrlKey && e.key==='k') { term.clear(); return false; }
+    if (e.metaKey && e.key==='c' && term.hasSelection()) {
+      navigator.clipboard.writeText(decodeXtermSelection(term.getSelection())).catch(() => {});
+      return false;
+    }
     return true;
   });
   new ResizeObserver(() => debouncedFit(s.id)).observe(twEl);
@@ -794,6 +812,15 @@ function buildPanel(s, lay) {
 new ResizeObserver(() => { updateCanvasHeight(); scheduleRefit(); }).observe(gridWrap);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) setTimeout(scheduleRefit, 100);
+});
+
+// Fix clipboard encoding: xterm's execCommand fallback can produce Mac Roman on macOS.
+// Intercept every copy event and re-set data from xterm's selection (proper Unicode).
+document.addEventListener('copy', e => {
+  for (const t of Object.values(terms)) {
+    const sel = decodeXtermSelection(t.getSelection());
+    if (sel) { e.preventDefault(); e.clipboardData.setData('text/plain', sel); return; }
+  }
 });
 
 // ── Dot helpers ───────────────────────────────────────────────
