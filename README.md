@@ -5,13 +5,14 @@ Dashboard web para correr múltiples sesiones de Claude Code (u otras herramient
 ## Requisitos
 
 - Node.js 18+
-- `node-pty` requiere compilación nativa:
 
-| Plataforma | Comando |
-|------------|---------|
-| **macOS** | `xcode-select --install` |
-| **Linux** | `sudo apt install build-essential python3` |
-| **Windows** | Visual Studio Build Tools con "Desktop development with C++" |
+> **Si `npm install` falla** es porque una dependencia interna (`node-pty`) necesita compilar código nativo. Instala las herramientas de compilación de tu sistema y vuelve a intentarlo:
+>
+> - **macOS**: `xcode-select --install` (Command Line Tools, no el IDE)
+> - **Linux**: `sudo apt install build-essential python3`
+> - **Windows**: instala [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) y selecciona "Desarrollo para escritorio con C++"
+>
+> Si `npm install` funcionó sin errores, no necesitas hacer nada de esto.
 
 ## Instalación
 
