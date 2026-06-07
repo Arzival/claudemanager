@@ -62,7 +62,6 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   padding:3px 10px;cursor:pointer;white-space:nowrap;transition:all .15s;flex-shrink:0;
 }
 .ws-btn:hover{border-color:rgba(0,245,255,.5);color:var(--cyan)}
-#ws-save:hover{border-color:rgba(255,214,10,.5) !important;color:var(--yellow) !important}
 /* Divider between buttons and tabs */
 .ws-divider{width:1px;height:18px;background:rgba(0,245,255,.12);flex-shrink:0;margin:0 6px}
 #ws-tabs{display:flex;flex-wrap:nowrap;align-items:center;gap:2px;overflow-x:auto;flex:1}
@@ -204,7 +203,6 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
 <div id="ws-bar">
   <span class="ws-label">WS</span>
   <button class="ws-btn" id="ws-new">＋ Nuevo</button>
-  <button class="ws-btn" id="ws-save" style="border-color:rgba(255,214,10,.2);color:rgba(255,214,10,.4)">↓ Guardar</button>
   <div class="ws-divider"></div>
   <div id="ws-tabs"></div>
 </div>
@@ -847,15 +845,6 @@ setInterval(() => {
 }, 1000);
 
 document.getElementById('ws-new').addEventListener('click', newWorkspace);
-document.getElementById('ws-save').addEventListener('click', () => {
-  if (!wsStore.active) return;
-  wsStore.workspaces[wsStore.active] = { panelIds: visiblePanelIds(), layout: snapshotLayout() };
-  saveWsStore();
-  const btn = document.getElementById('ws-save');
-  const prev = btn.textContent;
-  btn.textContent = '✓ Listo'; btn.style.color = 'var(--green)';
-  setTimeout(() => { btn.textContent = prev; btn.style.color = ''; }, 1400);
-});
 
 setInterval(() => { clockEl.textContent = new Date().toLocaleTimeString('en-US',{hour12:false}); }, 1000);
 clockEl.textContent = new Date().toLocaleTimeString('en-US',{hour12:false});
