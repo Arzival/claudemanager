@@ -344,7 +344,7 @@ const connEl   = document.getElementById('conn');
 const clockEl  = document.getElementById('clock');
 const pickOv   = document.getElementById('pick-overlay');
 const cfgOv    = document.getElementById('cfg-overlay');
-const terms = {}, fits = {}, lastOut = {}, statuses = {};
+const terms = {}, fits = {}, lastOut = {}, statuses = {}, lastResizeTime = {};
 let projectData = [], selectedProject = null, panelCount = 0, detectedClaude = '', currentTechIdx = -1;
 let toolsList = [], selectedToolId = null;
 
@@ -778,11 +778,22 @@ function buildPanel(s, lay) {
   terms[s.id] = term; fits[s.id] = fit;
   try { fit.fit(); } catch {}
   requestAnimationFrame(() => debouncedFit(s.id, 0));
-  // Extra deferred fits: cover cases where DOM isn't fully painted on first render
-  [80, 300, 900].forEach(d => setTimeout(() => { try { fits[s.id]?.fit(); } catch {} }, d));
+  // Buffered output from server arrives after the initial fit and can overwrite
+  // the SIGWINCH redraw with stale content. Force a resize after the buffer
+  // settles so Claude always redraws at the correct panel dimensions.
+  setTimeout(() => {
+    const t = terms[s.id];
+    if (!t) return;
+    ws.send(JSON.stringify({ type:'resize', sessionId:s.id, cols:t.cols, rows:t.rows }));
+    lastResizeTime[s.id] = Date.now();
+    setTimeout(() => { try { terms[s.id]?.scrollToBottom(); } catch {} }, 500);
+  }, 350);
 
   term.onData(data => ws.send(JSON.stringify({ type:'input', sessionId:s.id, data })));
-  term.onResize(({cols,rows}) => ws.send(JSON.stringify({ type:'resize', sessionId:s.id, cols, rows })));
+  term.onResize(({cols,rows}) => {
+    ws.send(JSON.stringify({ type:'resize', sessionId:s.id, cols, rows }));
+    lastResizeTime[s.id] = Date.now();
+  });
   term.attachCustomKeyEventHandler(e => {
     if (e.type !== 'keydown') return true;
     if (e.ctrlKey && e.key==='k') { term.clear(); return false; }
@@ -1025,7 +1036,12 @@ ws.addEventListener('message', ev => {
 
   } else if (msg.type === 'output') {
     const t=terms[msg.sessionId];
-    if (t) { t.write(msg.data); lastOut[msg.sessionId]=Date.now(); }
+    if (t) {
+      t.write(msg.data);
+      lastOut[msg.sessionId]=Date.now();
+      // After a resize the app redraws via SIGWINCH; scroll to bottom when that output arrives
+      if (Date.now() - (lastResizeTime[msg.sessionId] || 0) < 1500) t.scrollToBottom();
+    }
     if (statuses[msg.sessionId]!=='exited') setDot(msg.sessionId,'running');
 
   } else if (msg.type === 'status') {
