@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CLAUDE//MANAGER</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<style>
+:root{--cyan:#00f5ff;--pink:#ff006e;--yellow:#ffd60a;--green:#39ff14;--bg:#05050f;--bg2:#090916;--border:rgba(0,245,255,.35)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;font-family:'Courier New',monospace;background:var(--bg);color:#8aa0b4}
+body{background-image:linear-gradient(rgba(0,245,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(0,245,255,.018) 1px,transparent 1px);background-size:36px 36px}
+header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
+  background:#07071a;border-bottom:1px solid var(--border);box-shadow:0 2px 20px rgba(0,245,255,.1);flex-shrink:0}
+.logo{font-size:14px;font-weight:bold;letter-spacing:4px;color:var(--cyan);text-shadow:0 0 10px var(--cyan)}
+.logo .sl{color:var(--pink)}
+.hbar{display:flex;align-items:center;gap:14px;margin-left:auto;font-size:11px}
+.hitem{display:flex;align-items:center;gap:5px}
+.hlabel{color:rgba(0,245,255,.4);font-size:9px;letter-spacing:2px;text-transform:uppercase}
+#conn{color:var(--pink);font-size:10px}
+#conn.ok{color:var(--green);text-shadow:0 0 8px var(--green)}
+#clock{color:var(--yellow);font-weight:bold}
+.hbtn{background:transparent;border:1px solid var(--cyan);color:var(--cyan);font-family:inherit;
+  font-size:10px;letter-spacing:2px;padding:4px 10px;cursor:pointer;text-transform:uppercase;transition:all .2s}
+.hbtn:hover{background:rgba(0,245,255,.1);box-shadow:0 0 12px rgba(0,245,255,.3)}
+.hbtn.y{border-color:rgba(255,214,10,.5);color:rgba(255,214,10,.8)}
+
+/* WORKSPACE BAR */
+#ws-bar{
+  height:34px;display:flex;align-items:center;gap:4px;padding:0 12px;
+  background:#060612;border-bottom:1px solid rgba(0,245,255,.08);flex-shrink:0;overflow-x:auto;
+}
+#ws-bar::-webkit-scrollbar{height:2px}
+#ws-bar::-webkit-scrollbar-thumb{background:rgba(0,245,255,.2)}
+.ws-label{color:rgba(0,245,255,.2);font-size:8px;letter-spacing:3px;text-transform:uppercase;
+  flex-shrink:0;padding-right:8px;border-right:1px solid rgba(0,245,255,.1);margin-right:4px}
+.ws-tab{
+  position:relative;display:flex;align-items:center;
+  padding:4px 28px 4px 12px; /* right padding leaves room for hidden ✕ */
+  cursor:pointer;border-bottom:2px solid transparent;
+  color:rgba(0,245,255,.35);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;
+  white-space:nowrap;transition:all .15s;flex-shrink:0;user-select:none;
+}
+.ws-tab:hover{color:rgba(0,245,255,.75)}
+.ws-tab.active{
+  color:var(--cyan);border-bottom-color:var(--cyan);
+  text-shadow:0 0 8px rgba(0,245,255,.4);
+}
+/* Delete button — hidden until tab is hovered */
+.ws-del{
+  position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  background:none;border:none;cursor:pointer;padding:0;line-height:1;
+  color:rgba(255,0,110,.0);font-size:11px;transition:color .15s;
+}
+.ws-tab:hover .ws-del{color:rgba(255,0,110,.5)}
+.ws-del:hover{color:var(--pink) !important}
+/* Left-side buttons */
+.ws-btn{
+  background:transparent;border:1px solid rgba(0,245,255,.18);color:rgba(0,245,255,.4);
+  font-family:inherit;font-size:9px;letter-spacing:1px;text-transform:uppercase;
+  padding:3px 10px;cursor:pointer;white-space:nowrap;transition:all .15s;flex-shrink:0;
+}
+.ws-btn:hover{border-color:rgba(0,245,255,.5);color:var(--cyan)}
+#ws-save:hover{border-color:rgba(255,214,10,.5) !important;color:var(--yellow) !important}
+/* Divider between buttons and tabs */
+.ws-divider{width:1px;height:18px;background:rgba(0,245,255,.12);flex-shrink:0;margin:0 6px}
+#ws-tabs{display:flex;flex-wrap:nowrap;align-items:center;gap:2px;overflow-x:auto;flex:1}
+#ws-tabs::-webkit-scrollbar{display:none}
+
+/* FREE-FORM CANVAS */
+#grid-wrap{height:calc(100vh - 72px);overflow:auto;user-select:none}
+#canvas{position:relative;width:100%;min-height:100%}
+
+/* PANEL — absolutely positioned, freely movable */
+.panel{
+  position:absolute;display:flex;flex-direction:column;overflow:hidden;
+  background:var(--bg2);border:1px solid var(--border);
+  box-shadow:0 0 10px rgba(0,245,255,.12),inset 0 0 40px rgba(0,245,255,.015);
+  transition:box-shadow .2s;min-width:200px;min-height:120px;
+}
+.panel:focus-within{border-color:rgba(0,245,255,.7);box-shadow:0 0 20px rgba(0,245,255,.35)}
+.panel::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,var(--cyan),transparent);opacity:.6;z-index:2;pointer-events:none}
+
+/* Header — drag handle */
+.ph{display:flex;align-items:center;gap:7px;padding:5px 10px;flex-shrink:0;
+  background:linear-gradient(90deg,rgba(0,245,255,.06),transparent);
+  border-bottom:1px solid rgba(0,245,255,.15);position:relative;z-index:1;cursor:grab}
+.ph:active{cursor:grabbing}
+.ph-id{color:rgba(0,245,255,.35);font-size:9px;letter-spacing:2px;flex-shrink:0}
+.ph-name{color:var(--cyan);font-size:12px;font-weight:bold;letter-spacing:1px;flex:1;
+  text-shadow:0 0 6px rgba(0,245,255,.4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ph-cwd{color:rgba(160,180,200,.3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
+
+@keyframes gg{0%,100%{box-shadow:0 0 3px var(--green)}50%{box-shadow:0 0 10px var(--green),0 0 20px rgba(57,255,20,.3)}}
+@keyframes yy{0%,100%{box-shadow:0 0 3px var(--yellow)}50%{box-shadow:0 0 10px var(--yellow)}}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot.running{background:var(--green);animation:gg 2s ease-in-out infinite}
+.dot.idle{background:var(--yellow);animation:yy 2s ease-in-out infinite}
+.dot.exited{background:var(--pink);box-shadow:0 0 6px var(--pink)}
+.pbtn{background:transparent;border:1px solid rgba(0,245,255,.22);color:rgba(0,245,255,.45);
+  font-size:10px;padding:2px 5px;cursor:pointer;font-family:inherit;transition:all .2s;flex-shrink:0;line-height:1}
+.pbtn:hover{border-color:rgba(0,245,255,.6);color:var(--cyan)}
+
+/* Terminal */
+.tw{flex:1;padding:4px;min-height:0;min-width:0;overflow:hidden}
+.xterm{height:100%}
+.xterm-viewport::-webkit-scrollbar{width:3px}
+.xterm-viewport::-webkit-scrollbar-thumb{background:rgba(0,245,255,.3);border-radius:2px}
+
+/* Resize handles — edge strips + corner */
+.rh{position:absolute;z-index:10}
+.rh-r{right:-4px;top:4px;bottom:4px;width:8px;cursor:col-resize}
+.rh-b{bottom:-4px;left:4px;right:4px;height:8px;cursor:row-resize}
+.rh-t{top:-4px;left:4px;right:4px;height:8px;cursor:row-resize}
+.rh-l{left:-4px;top:4px;bottom:4px;width:8px;cursor:col-resize}
+.rh-br{bottom:-4px;right:-4px;width:14px;height:14px;cursor:nwse-resize;
+  background:rgba(0,245,255,.3);border-radius:2px}
+.rh-br:hover{background:var(--cyan);box-shadow:0 0 6px var(--cyan)}
+
+/* MODALS */
+.mo{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:500;
+  align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.mo.open{display:flex}
+.mbox{background:#0d0d22;border:1px solid rgba(0,245,255,.6);box-shadow:0 0 50px rgba(0,245,255,.2)}
+.mhdr{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;
+  border-bottom:1px solid rgba(0,245,255,.25);background:rgba(0,245,255,.05)}
+.mhdr-t{color:#fff;font-size:12px;letter-spacing:3px;font-weight:bold}
+.mcls{background:none;border:1px solid rgba(255,0,110,.4);color:var(--pink);font-size:12px;cursor:pointer;padding:3px 8px}
+.mcls:hover{background:rgba(255,0,110,.15)}
+#pick-modal{width:660px;max-width:94vw;height:420px;display:flex;flex-direction:column}
+.pick-body{display:flex;flex:1;min-height:0;overflow:hidden}
+.tech-list{width:170px;flex-shrink:0;overflow-y:auto;padding:8px 0;background:#0a0a1e;border-right:1px solid rgba(0,245,255,.15)}
+.tech-list li{list-style:none;padding:9px 16px;cursor:pointer;font-size:11px;letter-spacing:1.5px;
+  color:#c0d4e8;text-transform:uppercase;transition:all .15s;border-left:2px solid transparent}
+.tech-list li:hover{color:#fff;background:rgba(0,245,255,.08);border-left-color:rgba(0,245,255,.4)}
+.tech-list li.active{color:var(--cyan);border-left-color:var(--cyan);background:rgba(0,245,255,.12);font-weight:bold}
+.proj-list{flex:1;overflow-y:auto;padding:8px 0}
+.proj-list li{list-style:none;padding:9px 18px;cursor:pointer;font-size:12px;color:#c0d4e8;transition:all .15s;border-left:2px solid transparent}
+.proj-list li:hover{color:#fff;background:rgba(0,245,255,.07);border-left-color:rgba(0,245,255,.4)}
+.proj-list li.active{color:var(--green);border-left-color:var(--green);background:rgba(57,255,20,.08);font-weight:bold}
+.pick-foot{padding:12px 18px;border-top:1px solid rgba(0,245,255,.2);display:flex;align-items:center;gap:14px;background:rgba(0,0,0,.3);flex-shrink:0}
+.chk-wrap{display:flex;align-items:center;gap:8px;cursor:pointer}
+.chk-wrap input{accent-color:var(--pink);width:14px;height:14px;cursor:pointer}
+.chk-wrap span{font-size:10px;letter-spacing:1px;color:#e0a0b8;text-transform:uppercase}
+.launch-btn{margin-left:auto;background:transparent;border:1px solid var(--green);color:var(--green);font-family:inherit;
+  font-size:10px;letter-spacing:2px;padding:7px 20px;cursor:pointer;text-transform:uppercase;font-weight:bold;transition:all .2s}
+.launch-btn:hover:not(:disabled){background:rgba(57,255,20,.12);box-shadow:0 0 16px rgba(57,255,20,.35)}
+.launch-btn:disabled{opacity:.25;cursor:default;border-color:#555;color:#555}
+.empty-h{color:rgba(0,245,255,.35);font-size:11px;padding:24px 18px}
+#proj-toolbar{display:none}
+#new-folder-form{display:none}
+#ctx-row{display:none}
+.ctx-chip{display:flex;align-items:center;gap:5px;padding:2px 8px;
+  background:rgba(0,245,255,.08);border:1px solid rgba(0,245,255,.3);
+  color:var(--cyan);font-size:10px;border-radius:2px;white-space:nowrap}
+.ctx-chip button{background:none;border:none;color:rgba(0,245,255,.5);cursor:pointer;
+  font-size:11px;line-height:1;padding:0}
+.ctx-chip button:hover{color:var(--pink)}
+.add-ctx-btn{background:transparent;border:1px solid rgba(57,255,20,.35);
+  color:rgba(57,255,20,.6);font-size:9px;padding:1px 6px;cursor:pointer;
+  font-family:inherit;transition:all .15s;flex-shrink:0}
+.add-ctx-btn:hover{border-color:var(--green);color:var(--green)}
+#cfg-modal{width:580px;max-width:94vw}
+.cfg-f{display:flex;flex-direction:column;gap:6px}
+.cfg-l{color:rgba(255,214,10,.6);font-size:9px;letter-spacing:2px;text-transform:uppercase}
+.cfg-i{background:#07071a;border:1px solid rgba(0,245,255,.3);color:#e0f0ff;
+  font-family:'Courier New',monospace;font-size:12px;padding:8px 10px;outline:none;width:100%}
+.cfg-h{color:rgba(160,180,200,.4);font-size:10px}
+/* Tool selector in picker */
+.tool-row{display:flex;align-items:center;gap:8px;padding:8px 12px;
+  border-top:1px solid rgba(0,245,255,.1);background:#08081a;flex-shrink:0;flex-wrap:wrap}
+.tool-row-label{color:rgba(0,245,255,.4);font-size:9px;letter-spacing:2px;
+  text-transform:uppercase;flex-shrink:0}
+.tool-pill{background:transparent;border:1px solid rgba(0,245,255,.2);color:rgba(0,245,255,.45);
+  font-family:inherit;font-size:10px;letter-spacing:1px;padding:3px 12px;
+  cursor:pointer;text-transform:uppercase;transition:all .15s}
+.tool-pill:hover{border-color:rgba(0,245,255,.5);color:rgba(0,245,255,.8)}
+.tool-pill.active{border-color:var(--cyan);color:var(--cyan);background:rgba(0,245,255,.08)}
+/* Tools list in config */
+.tool-item{display:flex;align-items:center;gap:8px;padding:8px 10px;
+  border:1px solid rgba(0,245,255,.15);margin-bottom:6px;background:#0a0a1e}
+.tool-item-name{color:var(--cyan);font-size:11px;font-weight:bold;flex:1}
+.tool-item-cmd{color:rgba(160,180,200,.4);font-size:10px;flex:2;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.tool-ibtn{background:transparent;border:1px solid rgba(0,245,255,.2);color:rgba(0,245,255,.5);
+  font-family:inherit;font-size:9px;padding:2px 8px;cursor:pointer;transition:all .15s}
+.tool-ibtn:hover{border-color:var(--cyan);color:var(--cyan)}
+.tool-ibtn.del{border-color:rgba(255,0,110,.2);color:rgba(255,0,110,.4)}
+.tool-ibtn.del:hover{border-color:var(--pink);color:var(--pink)}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">CLAUDE<span class="sl">//</span>MGR</div>
+  <div class="hbar">
+    <div class="hitem"><span class="hlabel">NET</span><span id="conn">◉ OFFLINE</span></div>
+    <div class="hitem"><span id="clock"></span></div>
+    <button class="hbtn" id="btn-open">＋ OPEN PROJECT</button>
+    <button class="hbtn y" id="btn-cfg">⚙ CONFIG</button>
+  </div>
+</header>
+<div id="ws-bar">
+  <span class="ws-label">WS</span>
+  <button class="ws-btn" id="ws-new">＋ Nuevo</button>
+  <button class="ws-btn" id="ws-save" style="border-color:rgba(255,214,10,.2);color:rgba(255,214,10,.4)">↓ Guardar</button>
+  <div class="ws-divider"></div>
+  <div id="ws-tabs"></div>
+</div>
+<div id="grid-wrap"><div id="canvas"></div></div>
+
+<!-- Project picker -->
+<div class="mo" id="pick-overlay">
+  <div class="mbox" id="pick-modal">
+    <div class="mhdr"><span class="mhdr-t">◈ SELECT PROJECT</span><button class="mcls" id="pick-close">✕</button></div>
+    <div class="pick-body">
+      <ul class="tech-list" id="tech-list"></ul>
+      <div style="display:flex;flex-direction:column;flex:1;min-height:0">
+        <div id="proj-toolbar" style="display:none;padding:6px 10px;border-bottom:1px solid rgba(0,245,255,.12);
+          background:#0a0a1e;flex-shrink:0;align-items:center;gap:8px">
+          <span id="proj-tech-label" style="color:rgba(0,245,255,.5);font-size:9px;letter-spacing:2px;text-transform:uppercase;flex:1"></span>
+          <button id="btn-new-folder" style="background:transparent;border:1px solid rgba(57,255,20,.4);
+            color:rgba(57,255,20,.7);font-family:inherit;font-size:9px;letter-spacing:1px;
+            padding:3px 9px;cursor:pointer;text-transform:uppercase;transition:all .2s">＋ Nueva carpeta</button>
+        </div>
+        <div id="new-folder-form" style="display:none;padding:8px 10px;border-bottom:1px solid rgba(0,245,255,.12);
+          background:#07071a;flex-shrink:0;gap:6px;align-items:center">
+          <input id="new-folder-input" type="text" placeholder="nombre-del-proyecto"
+            style="flex:1;background:#0d0d22;border:1px solid rgba(57,255,20,.4);color:#e0f0ff;
+            font-family:'Courier New',monospace;font-size:12px;padding:5px 8px;outline:none">
+          <button id="new-folder-ok" style="background:transparent;border:1px solid var(--green);color:var(--green);
+            font-family:inherit;font-size:9px;letter-spacing:1px;padding:5px 10px;cursor:pointer;text-transform:uppercase">Crear</button>
+          <button id="new-folder-cancel" style="background:transparent;border:1px solid rgba(255,0,110,.3);
+            color:rgba(255,0,110,.6);font-family:inherit;font-size:9px;padding:5px 8px;cursor:pointer">✕</button>
+        </div>
+        <ul class="proj-list" id="proj-list" style="flex:1"><li class="empty-h">← selecciona una tecnología</li></ul>
+      </div>
+    </div>
+    <!-- Tool selector -->
+    <div class="tool-row">
+      <span class="tool-row-label">Tool</span>
+      <div id="tool-pills"></div>
+    </div>
+    <!-- Context chips row -->
+    <div id="ctx-row" style="display:none;padding:8px 12px;border-top:1px solid rgba(0,245,255,.12);
+      background:#080818;flex-shrink:0;gap:6px;flex-wrap:wrap;align-items:center">
+      <span style="color:rgba(0,245,255,.4);font-size:9px;letter-spacing:1px;text-transform:uppercase;flex-shrink:0">Contexto:</span>
+      <div id="ctx-chips" style="display:flex;gap:6px;flex-wrap:wrap;flex:1"></div>
+    </div>
+    <div class="pick-foot">
+      <label class="chk-wrap"><input type="checkbox" id="chk-resume"><span>↩ retomar</span></label>
+      <label class="chk-wrap"><input type="checkbox" id="chk-danger" checked><span>⚡ skip perms</span></label>
+      <button class="launch-btn" id="btn-launch" disabled>LAUNCH</button>
+    </div>
+  </div>
+</div>
+
+<!-- Config modal -->
+<div class="mo" id="cfg-overlay">
+  <div class="mbox" id="cfg-modal" style="display:flex;flex-direction:column;max-height:90vh">
+    <div class="mhdr" style="border-bottom-color:rgba(255,214,10,.2);background:rgba(255,214,10,.04)">
+      <span class="mhdr-t" style="color:#ffd60a">⚙ CONFIGURATION</span>
+      <button class="mcls" id="cfg-close">✕</button>
+    </div>
+    <div style="padding:18px;display:flex;flex-direction:column;gap:16px;overflow-y:auto;flex:1">
+      <!-- Projects root -->
+      <div class="cfg-f">
+        <label class="cfg-l">Projects Root Directory</label>
+        <input class="cfg-i" id="cfg-root" placeholder="/Users/yourname/Documents/Projects">
+        <span class="cfg-h">Carpeta con tus subcarpetas por tecnología (React/, Node/, etc.)</span>
+      </div>
+      <!-- Tools list -->
+      <div class="cfg-f">
+        <label class="cfg-l">Herramientas</label>
+        <div id="tools-list"></div>
+        <button id="btn-add-tool" style="background:transparent;border:1px solid rgba(57,255,20,.3);
+          color:rgba(57,255,20,.6);font-family:inherit;font-size:9px;letter-spacing:1px;
+          padding:5px 12px;cursor:pointer;text-transform:uppercase;transition:all .2s;align-self:flex-start">
+          ＋ Agregar herramienta
+        </button>
+      </div>
+      <!-- Tool form (hidden by default) -->
+      <div id="tool-form" style="display:none;border:1px solid rgba(0,245,255,.2);padding:14px;
+        background:#08081e;display:none;flex-direction:column;gap:10px">
+        <span style="color:var(--cyan);font-size:10px;letter-spacing:2px;text-transform:uppercase"
+          id="tool-form-title">NUEVA HERRAMIENTA</span>
+        <input type="hidden" id="tf-id">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="cfg-f">
+            <label class="cfg-l" style="font-size:8px">Nombre</label>
+            <input class="cfg-i" id="tf-name" placeholder="Gemini CLI" style="padding:6px 8px">
+          </div>
+          <div class="cfg-f">
+            <label class="cfg-l" style="font-size:8px">Comando</label>
+            <div style="display:flex;gap:4px">
+              <input class="cfg-i" id="tf-cmd" placeholder="/usr/local/bin/gemini" style="padding:6px 8px;flex:1">
+              <button id="tf-detect" style="background:transparent;border:1px solid rgba(0,245,255,.3);
+                color:rgba(0,245,255,.6);font-family:inherit;font-size:8px;padding:0 8px;cursor:pointer;
+                white-space:nowrap;text-transform:uppercase">Auto</button>
+            </div>
+          </div>
+          <div class="cfg-f">
+            <label class="cfg-l" style="font-size:8px">Flag skip permisos</label>
+            <input class="cfg-i" id="tf-skip" placeholder="--dangerously-skip-permissions" style="padding:6px 8px">
+          </div>
+          <div class="cfg-f">
+            <label class="cfg-l" style="font-size:8px">Flag reanudar</label>
+            <input class="cfg-i" id="tf-resume" placeholder="--continue" style="padding:6px 8px">
+          </div>
+          <div class="cfg-f" style="grid-column:1/-1">
+            <label class="cfg-l" style="font-size:8px">Flag agregar directorio (contexto)</label>
+            <input class="cfg-i" id="tf-adddir" placeholder="--add-dir" style="padding:6px 8px">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button id="tf-cancel" style="background:transparent;border:1px solid rgba(255,0,110,.3);
+            color:rgba(255,0,110,.6);font-family:inherit;font-size:9px;padding:5px 12px;cursor:pointer;text-transform:uppercase">Cancelar</button>
+          <button id="tf-save" style="background:transparent;border:1px solid var(--green);color:var(--green);
+            font-family:inherit;font-size:9px;padding:5px 14px;cursor:pointer;text-transform:uppercase;font-weight:bold">Guardar</button>
+        </div>
+      </div>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid rgba(255,214,10,.15);
+      display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,.2);flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:8px">
+        <button id="cfg-detect" style="background:transparent;border:1px solid rgba(0,245,255,.3);
+          color:rgba(0,245,255,.6);font-family:inherit;font-size:9px;letter-spacing:1px;
+          padding:5px 10px;cursor:pointer;white-space:nowrap;text-transform:uppercase">
+          Auto detect Claude</button>
+        <input type="hidden" id="cfg-claude">
+      </div>
+      <button id="cfg-save" style="background:transparent;border:1px solid #ffd60a;color:#ffd60a;
+        font-family:inherit;font-size:10px;letter-spacing:2px;padding:7px 22px;cursor:pointer;
+        text-transform:uppercase;font-weight:bold">SAVE &amp; RELOAD</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const gridWrap = document.getElementById('grid-wrap');
+const canvas   = document.getElementById('canvas');
+const connEl   = document.getElementById('conn');
+const clockEl  = document.getElementById('clock');
+const pickOv   = document.getElementById('pick-overlay');
+const cfgOv    = document.getElementById('cfg-overlay');
+const terms = {}, fits = {}, lastOut = {}, statuses = {};
+let projectData = [], selectedProject = null, panelCount = 0, detectedClaude = '', currentTechIdx = -1;
+let toolsList = [], selectedToolId = null;
+
+// ── Tools ─────────────────────────────────────────────────────
+function renderToolPills() {
+  const el = document.getElementById('tool-pills');
+  if (!el) return;
+  el.innerHTML = '';
+  toolsList.forEach(t => {
+    const btn = document.createElement('button');
+    btn.className = 'tool-pill' + (t.id === selectedToolId ? ' active' : '');
+    btn.textContent = t.name;
+    btn.addEventListener('click', () => {
+      selectedToolId = t.id;
+      renderToolPills();
+      // Show/hide skip perms checkbox based on tool capability
+      const tool = toolsList.find(x => x.id === selectedToolId);
+      const chkWrap = document.getElementById('chk-danger').closest('.chk-wrap');
+      chkWrap.style.display = tool?.skipPermsFlag ? '' : 'none';
+      const chkResume = document.getElementById('chk-resume').closest('.chk-wrap');
+      chkResume.style.display = tool?.resumeFlag ? '' : 'none';
+    });
+    el.appendChild(btn);
+  });
+}
+
+function renderToolsList() {
+  const el = document.getElementById('tools-list');
+  if (!el) return;
+  el.innerHTML = '';
+  toolsList.forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'tool-item';
+    row.innerHTML = `
+      <span class="tool-item-name">${t.name}</span>
+      <span class="tool-item-cmd">${t.command}</span>
+      <button class="tool-ibtn edit-btn">Editar</button>
+      <button class="tool-ibtn del del-btn">Eliminar</button>`;
+    row.querySelector('.edit-btn').addEventListener('click', () => openToolForm(t));
+    row.querySelector('.del-btn').addEventListener('click', () => {
+      if (confirm(`Eliminar "${t.name}"?`))
+        ws.send(JSON.stringify({ type: 'delete-tool', toolId: t.id }));
+    });
+    el.appendChild(row);
+  });
+}
+
+function openToolForm(tool = null) {
+  const form = document.getElementById('tool-form');
+  document.getElementById('tool-form-title').textContent = tool ? 'EDITAR HERRAMIENTA' : 'NUEVA HERRAMIENTA';
+  document.getElementById('tf-id').value       = tool?.id || '';
+  document.getElementById('tf-name').value     = tool?.name || '';
+  document.getElementById('tf-cmd').value      = tool?.command || '';
+  document.getElementById('tf-skip').value     = tool?.skipPermsFlag || '';
+  document.getElementById('tf-resume').value   = tool?.resumeFlag || '';
+  document.getElementById('tf-adddir').value   = tool?.addDirFlag || '';
+  form.style.display = 'flex';
+}
+
+function closeToolForm() {
+  document.getElementById('tool-form').style.display = 'none';
+}
+
+document.getElementById('btn-add-tool').addEventListener('click', () => openToolForm());
+document.getElementById('tf-cancel').addEventListener('click', closeToolForm);
+document.getElementById('tf-detect').addEventListener('click', () => {
+  ws.send(JSON.stringify({ type: 'detect-claude' }));
+});
+document.getElementById('tf-save').addEventListener('click', () => {
+  const name = document.getElementById('tf-name').value.trim();
+  const command = document.getElementById('tf-cmd').value.trim();
+  if (!name || !command) return;
+  const id = document.getElementById('tf-id').value || name.toLowerCase().replace(/\s+/g, '-');
+  const tool = {
+    id, name, command,
+    defaultArgs: [],
+    skipPermsFlag: document.getElementById('tf-skip').value.trim() || null,
+    resumeFlag: document.getElementById('tf-resume').value.trim() || null,
+    addDirFlag: document.getElementById('tf-adddir').value.trim() || null,
+  };
+  ws.send(JSON.stringify({ type: 'save-tool', tool }));
+  closeToolForm();
+});
+
+// ── Workspace system ──────────────────────────────────────────
+const WS_KEY = 'claudemgr-ws';
+let wsStore = { workspaces: {}, active: null };
+
+function loadWsStore() {
+  try { wsStore = JSON.parse(localStorage.getItem(WS_KEY) || '{"workspaces":{},"active":null}'); }
+  catch { wsStore = { workspaces: {}, active: null }; }
+}
+
+function saveWsStore() {
+  localStorage.setItem(WS_KEY, JSON.stringify(wsStore));
+}
+
+function snapshotLayout() {
+  const W = gridWrap.clientWidth, H = gridWrap.clientHeight;
+  const layout = {};
+  canvas.querySelectorAll('.panel').forEach(p => {
+    if (!p.dataset.hidden) {
+      layout[p.dataset.id] = {
+        l: parseFloat(p.style.left)  / W,
+        t: parseFloat(p.style.top)   / H,
+        w: parseFloat(p.style.width) / W,
+        h: parseFloat(p.style.height)/ H,
+      };
+    }
+  });
+  return layout;
+}
+
+function visiblePanelIds() {
+  return [...canvas.querySelectorAll('.panel')]
+    .filter(p => !p.dataset.hidden).map(p => p.dataset.id);
+}
+
+// Save current state into active workspace
+let wsSaveTimer;
+function persistToWorkspace() {
+  clearTimeout(wsSaveTimer);
+  wsSaveTimer = setTimeout(() => {
+    if (!wsStore.active) return;
+    wsStore.workspaces[wsStore.active] = {
+      panelIds: visiblePanelIds(),
+      layout: snapshotLayout(),
+    };
+    saveWsStore();
+  }, 300);
+}
+
+function applyWorkspace(name) {
+  const ws = wsStore.workspaces[name];
+  if (!ws) return;
+  const W = gridWrap.clientWidth, H = gridWrap.clientHeight;
+  canvas.querySelectorAll('.panel').forEach(p => {
+    const id = p.dataset.id;
+    if (ws.panelIds.includes(id)) {
+      delete p.dataset.hidden;
+      p.style.visibility = ''; p.style.pointerEvents = '';
+      if (ws.layout[id]) {
+        p.style.left   = (ws.layout[id].l * W) + 'px';
+        p.style.top    = (ws.layout[id].t * H) + 'px';
+        p.style.width  = (ws.layout[id].w * W) + 'px';
+        p.style.height = (ws.layout[id].h * H) + 'px';
+      }
+      setTimeout(() => { try { fits[id]?.fit(); } catch {} }, 60);
+    } else {
+      p.dataset.hidden = '1';
+      p.style.visibility = 'hidden'; p.style.pointerEvents = 'none';
+    }
+  });
+  updateCanvasHeight();
+}
+
+function switchWorkspace(name) {
+  if (wsStore.active) {
+    wsStore.workspaces[wsStore.active] = { panelIds: visiblePanelIds(), layout: snapshotLayout() };
+  }
+  wsStore.active = name;
+  saveWsStore();
+  applyWorkspace(name);
+  renderWsBar();
+}
+
+function newWorkspace() {
+  const name = prompt('Nombre del workspace:');
+  if (!name?.trim()) return;
+  const n = name.trim().toUpperCase();
+  if (wsStore.workspaces[n] && !confirm(`"${n}" ya existe. ¿Sobreescribir?`)) return;
+  // Save current before switching
+  if (wsStore.active)
+    wsStore.workspaces[wsStore.active] = { panelIds: visiblePanelIds(), layout: snapshotLayout() };
+  // New workspace starts EMPTY — hide all panels
+  wsStore.workspaces[n] = { panelIds: [], layout: {} };
+  wsStore.active = n;
+  canvas.querySelectorAll('.panel').forEach(p => {
+    p.dataset.hidden = '1';
+    p.style.visibility = 'hidden'; p.style.pointerEvents = 'none';
+  });
+  updateCanvasHeight(); saveWsStore(); renderWsBar();
+}
+
+function deleteWorkspace(name) {
+  if (!confirm(`Eliminar workspace "${name}"?`)) return;
+  delete wsStore.workspaces[name];
+  const keys = Object.keys(wsStore.workspaces);
+  wsStore.active = keys[0] || null;
+  if (wsStore.active) applyWorkspace(wsStore.active);
+  saveWsStore(); renderWsBar();
+}
+
+function renderWsBar() {
+  const tabsEl = document.getElementById('ws-tabs');
+  tabsEl.innerHTML = '';
+  Object.keys(wsStore.workspaces).forEach(name => {
+    const tab = document.createElement('div');
+    tab.className = 'ws-tab' + (wsStore.active === name ? ' active' : '');
+    const nameSpan = document.createElement('span'); nameSpan.textContent = name;
+    const del = document.createElement('button'); del.className = 'ws-del'; del.textContent = '✕';
+    tab.appendChild(nameSpan); tab.appendChild(del);
+    nameSpan.addEventListener('click', () => { if (wsStore.active !== name) switchWorkspace(name); });
+    del.addEventListener('click', e => { e.stopPropagation(); deleteWorkspace(name); });
+    tabsEl.appendChild(tab);
+  });
+}
+
+// Get saved layout for a panel (from active workspace or any workspace)
+function getSavedLayout(sessionId) {
+  if (wsStore.active && wsStore.workspaces[wsStore.active]?.layout[sessionId])
+    return wsStore.workspaces[wsStore.active].layout[sessionId];
+  for (const ws of Object.values(wsStore.workspaces))
+    if (ws.layout[sessionId]) return ws.layout[sessionId];
+  return null;
+}
+
+loadWsStore();
+const contextPaths = []; // { name, path }
+
+function addContext(proj) {
+  if (proj.path === selectedProject?.path) return; // don't add main project
+  if (contextPaths.find(c => c.path === proj.path)) return; // no duplicates
+  contextPaths.push(proj);
+  renderChips();
+}
+
+function removeContext(path) {
+  const i = contextPaths.findIndex(c => c.path === path);
+  if (i >= 0) { contextPaths.splice(i, 1); renderChips(); }
+}
+
+function renderChips() {
+  const row   = document.getElementById('ctx-row');
+  const chips = document.getElementById('ctx-chips');
+  chips.innerHTML = '';
+  contextPaths.forEach(c => {
+    const chip = document.createElement('div');
+    chip.className = 'ctx-chip';
+    chip.innerHTML = `<span>${c.name}</span><button title="Quitar">✕</button>`;
+    chip.querySelector('button').addEventListener('click', () => removeContext(c.path));
+    chips.appendChild(chip);
+  });
+  row.style.display = contextPaths.length ? 'flex' : 'none';
+}
+
+function clearContexts() { contextPaths.length = 0; renderChips(); }
+let zTop = 10;
+
+// ── Canvas height: expand to fit all panels ───────────────────
+function updateCanvasHeight() {
+  const panels = [...canvas.querySelectorAll('.panel')];
+  if (!panels.length) { canvas.style.height = ''; return; }
+  const maxBottom = Math.max(...panels.map(p =>
+    parseFloat(p.style.top) + parseFloat(p.style.height)));
+  canvas.style.height = Math.max(gridWrap.clientHeight, maxBottom + 20) + 'px';
+}
+
+// ── Default layout ────────────────────────────────────────────
+// Returns { l, t, w, h } as fractions 0..1 of the VIEWPORT
+function defaultLayout(idx, total) {
+  const G = 0.008;
+  if (total === 1) return { l:G, t:G, w:1-2*G, h:1-2*G };
+  const cols = total <= 2 ? 2 : total <= 4 ? 2 : 3;
+  const rows = Math.ceil(total / cols);
+  const ci = idx % cols, ri = Math.floor(idx / cols);
+  const w = 1/cols - G*1.5, h = 1/rows - G*1.5;
+  const l = ci*(1/cols) + G*0.75, t = ri*(1/rows) + G*0.75;
+  return { l, t, w, h };
+}
+
+// ── Apply position from fractions of viewport ─────────────────
+function applyLayout(panel, lay) {
+  const W = gridWrap.clientWidth, H = gridWrap.clientHeight;
+  panel.style.left   = (lay.l * W) + 'px';
+  panel.style.top    = (lay.t * H) + 'px';
+  panel.style.width  = (lay.w * W) + 'px';
+  panel.style.height = (lay.h * H) + 'px';
+}
+
+// ── Snap to 1% grid ───────────────────────────────────────────
+function snap(v) { return Math.round(v * 100) / 100; }
+
+// ── Refit ─────────────────────────────────────────────────────
+let refitT;
+function scheduleRefit() {
+  clearTimeout(refitT);
+  refitT = setTimeout(() => Object.values(fits).forEach(f => { try { f.fit(); } catch {} }), 80);
+}
+
+// Raise panel to top
+function raise(panel) { panel.style.zIndex = ++zTop; }
+
+// ── DRAG MOVE (header) ────────────────────────────────────────
+function initDragMove(panel, header) {
+  header.addEventListener('mousedown', e => {
+    if (e.target.closest('button')) return;
+    e.preventDefault(); raise(panel);
+    const W = gridWrap.clientWidth;
+    const sx = e.clientX, sy = e.clientY;
+    const sl = parseFloat(panel.style.left), st = parseFloat(panel.style.top);
+    const pw = parseFloat(panel.style.width);
+    panel.style.opacity = '.88';
+
+    function onMove(e) {
+      const l = Math.max(0, Math.min(W - pw, sl + e.clientX - sx));
+      const t = Math.max(0, st + e.clientY - sy);
+      panel.style.left = l + 'px';
+      panel.style.top  = t + 'px';
+    }
+    function onUp() {
+      panel.style.opacity = '1';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      updateCanvasHeight(); scheduleRefit(); persistToWorkspace();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+// ── DRAG RESIZE (edges + corner) ─────────────────────────────
+function initResizeHandle(panel, rh, dirs) {
+  rh.addEventListener('mousedown', e => {
+    e.preventDefault(); e.stopPropagation(); raise(panel);
+    const W = gridWrap.clientWidth, H = gridWrap.clientHeight;
+    const sx = e.clientX, sy = e.clientY;
+    const sl = parseFloat(panel.style.left), st = parseFloat(panel.style.top);
+    const sw = parseFloat(panel.style.width), sh = parseFloat(panel.style.height);
+
+    function onMove(e) {
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (dirs.includes('r')) panel.style.width  = Math.max(200, snap((sw+dx)/W)*W) + 'px';
+      if (dirs.includes('b')) panel.style.height = Math.max(120, snap((sh+dy)/H)*H) + 'px';
+      if (dirs.includes('l')) {
+        const newW = Math.max(200, snap((sw-dx)/W)*W);
+        panel.style.left  = (sl + sw - newW) + 'px';
+        panel.style.width = newW + 'px';
+      }
+      if (dirs.includes('t')) {
+        const newH = Math.max(120, snap((sh-dy)/H)*H);
+        panel.style.top    = (st + sh - newH) + 'px';
+        panel.style.height = newH + 'px';
+      }
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      updateCanvasHeight(); scheduleRefit(); persistToWorkspace();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+// ── Build panel ───────────────────────────────────────────────
+function buildPanel(s, lay) {
+  lay = getSavedLayout(s.id) || lay;
+  panelCount++;
+  const panel = document.createElement('div');
+  panel.className = 'panel'; panel.dataset.id = s.id;
+  panel.style.zIndex = ++zTop;
+
+  panel.innerHTML = `
+    <div class="ph">
+      <span class="ph-id">SYS:${String(panelCount).padStart(2,'0')}</span>
+      <div class="dot ${s.status}"></div>
+      <span class="ph-name">${s.name.toUpperCase()}</span>
+      <span class="ph-cwd" title="${s.cwd}">${s.cwd}</span>
+      <button class="pbtn closebtn" title="Cerrar">✕</button>
+    </div>
+    <div class="tw" id="tw-${s.id}"></div>
+    <div class="rh rh-r"></div>
+    <div class="rh rh-b"></div>
+    <div class="rh rh-l"></div>
+    <div class="rh rh-t"></div>
+    <div class="rh rh-br"></div>`;
+
+  canvas.appendChild(panel);
+  applyLayout(panel, lay);
+  updateCanvasHeight();
+
+  // Drag to move
+  initDragMove(panel, panel.querySelector('.ph'));
+
+  // Resize handles
+  initResizeHandle(panel, panel.querySelector('.rh-r'), ['r']);
+  initResizeHandle(panel, panel.querySelector('.rh-b'), ['b']);
+  initResizeHandle(panel, panel.querySelector('.rh-l'), ['l']);
+  initResizeHandle(panel, panel.querySelector('.rh-t'), ['t']);
+  initResizeHandle(panel, panel.querySelector('.rh-br'), ['r','b']);
+
+  // Raise on click
+  panel.addEventListener('mousedown', () => raise(panel));
+
+  panel.querySelector('.closebtn').addEventListener('click', () =>
+    ws.send(JSON.stringify({ type:'close', sessionId:s.id })));
+
+  // Terminal
+  const term = new Terminal({
+    theme:{background:'#090916',foreground:'#b0c8dc',cursor:'#00f5ff',cursorAccent:'#090916',
+      selectionBackground:'rgba(0,245,255,.18)',black:'#090916',red:'#ff006e',green:'#39ff14',
+      yellow:'#ffd60a',blue:'#0080ff',magenta:'#bf00ff',cyan:'#00f5ff',white:'#a0b4c8',
+      brightBlack:'#2a3a4a',brightRed:'#ff4090',brightGreen:'#80ff50',brightYellow:'#ffe060',
+      brightBlue:'#40a0ff',brightMagenta:'#df80ff',brightCyan:'#60ffff',brightWhite:'#e0f0ff'},
+    fontSize:13,fontFamily:"'Courier New',monospace",cursorBlink:true,scrollback:5000,
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById(`tw-${s.id}`));
+  requestAnimationFrame(() => { try { fit.fit(); } catch {} });
+  terms[s.id] = term; fits[s.id] = fit;
+
+  term.onData(data => ws.send(JSON.stringify({ type:'input', sessionId:s.id, data })));
+  term.onResize(({cols,rows}) => ws.send(JSON.stringify({ type:'resize', sessionId:s.id, cols, rows })));
+  term.attachCustomKeyEventHandler(e => {
+    if (e.ctrlKey && e.key==='k' && e.type==='keydown') { term.clear(); return false; }
+    return true;
+  });
+  new ResizeObserver(() => { try { fit.fit(); } catch {} }).observe(document.getElementById(`tw-${s.id}`));
+}
+
+new ResizeObserver(() => { updateCanvasHeight(); scheduleRefit(); }).observe(gridWrap);
+
+// ── Dot helpers ───────────────────────────────────────────────
+function setDot(id, st) {
+  statuses[id] = st;
+  const d = document.querySelector(`.panel[data-id="${id}"] .dot`);
+  if (d) d.className = `dot ${st}`;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const id of Object.keys(lastOut))
+    if (statuses[id]==='running' && now-lastOut[id]>5000) setDot(id,'idle');
+}, 1000);
+
+document.getElementById('ws-new').addEventListener('click', newWorkspace);
+document.getElementById('ws-save').addEventListener('click', () => {
+  if (!wsStore.active) return;
+  wsStore.workspaces[wsStore.active] = { panelIds: visiblePanelIds(), layout: snapshotLayout() };
+  saveWsStore();
+  const btn = document.getElementById('ws-save');
+  const prev = btn.textContent;
+  btn.textContent = '✓ Listo'; btn.style.color = 'var(--green)';
+  setTimeout(() => { btn.textContent = prev; btn.style.color = ''; }, 1400);
+});
+
+setInterval(() => { clockEl.textContent = new Date().toLocaleTimeString('en-US',{hour12:false}); }, 1000);
+clockEl.textContent = new Date().toLocaleTimeString('en-US',{hour12:false});
+
+// ── Config modal ──────────────────────────────────────────────
+function openConfig(d) {
+  document.getElementById('cfg-root').value = d.projectsRoot||'';
+  document.getElementById('cfg-claude').value = d.claudePath||d.detectedClaude||'';
+  renderToolsList();
+  closeToolForm();
+  cfgOv.classList.add('open');
+}
+document.getElementById('cfg-close').addEventListener('click', () => cfgOv.classList.remove('open'));
+cfgOv.addEventListener('click', e => { if (e.target===cfgOv) cfgOv.classList.remove('open'); });
+document.getElementById('btn-cfg').addEventListener('click', () => openConfig({
+  projectsRoot: document.getElementById('cfg-root').value,
+  claudePath:   document.getElementById('cfg-claude').value }));
+document.getElementById('cfg-detect').addEventListener('click', () => {
+  const b=document.getElementById('cfg-detect'); b.textContent='Detecting…'; b.disabled=true;
+  ws.send(JSON.stringify({ type:'detect-claude' }));
+});
+document.getElementById('cfg-save').addEventListener('click', () =>
+  ws.send(JSON.stringify({ type:'save-config',
+    projectsRoot: document.getElementById('cfg-root').value.trim(),
+    claudePath:   document.getElementById('cfg-claude').value.trim() })));
+
+// ── Project picker ────────────────────────────────────────────
+document.getElementById('btn-open').addEventListener('click', () => {
+  pickOv.classList.add('open'); selectedProject=null;
+  clearContexts();
+  document.getElementById('btn-launch').disabled=true;
+  ws.send(JSON.stringify({ type:'projects' }));
+});
+document.getElementById('pick-close').addEventListener('click', () => pickOv.classList.remove('open'));
+pickOv.addEventListener('click', e => { if (e.target===pickOv) pickOv.classList.remove('open'); });
+
+function showNewFolderForm(show) {
+  document.getElementById('new-folder-form').style.display = show ? 'flex' : 'none';
+  if (show) { document.getElementById('new-folder-input').value=''; document.getElementById('new-folder-input').focus(); }
+}
+
+document.getElementById('btn-new-folder').addEventListener('click', () => showNewFolderForm(true));
+document.getElementById('new-folder-cancel').addEventListener('click', () => showNewFolderForm(false));
+document.getElementById('new-folder-ok').addEventListener('click', createFolder);
+document.getElementById('new-folder-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') createFolder();
+  if (e.key === 'Escape') showNewFolderForm(false);
+});
+
+function createFolder() {
+  const name = document.getElementById('new-folder-input').value.trim();
+  if (!name || currentTechIdx < 0) return;
+  ws.send(JSON.stringify({ type:'create-folder', tech: projectData[currentTechIdx].tech, name }));
+  showNewFolderForm(false);
+}
+
+function selectTech(idx, el) {
+  currentTechIdx = idx;
+  document.querySelectorAll('#tech-list li').forEach(l=>l.classList.remove('active'));
+  el.classList.add('active');
+  const toolbar = document.getElementById('proj-toolbar');
+  toolbar.style.display = 'flex';
+  document.getElementById('proj-tech-label').textContent = projectData[idx].tech;
+  const pEl=document.getElementById('proj-list'); pEl.innerHTML='';
+  projectData[idx].projects.forEach(p=>{
+    const li = document.createElement('li');
+    li.style.cssText = 'display:flex;align-items:center;gap:6px;padding:7px 10px 7px 18px';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = p.name; nameSpan.style.flex = '1';
+    const addBtn = document.createElement('button');
+    addBtn.className = 'add-ctx-btn'; addBtn.textContent = '＋ ctx';
+    addBtn.title = 'Agregar como contexto adicional';
+    addBtn.addEventListener('click', e => { e.stopPropagation(); addContext(p); });
+    li.appendChild(nameSpan); li.appendChild(addBtn);
+    if (selectedProject?.path === p.path) li.classList.add('active');
+    li.addEventListener('click', () => {
+      document.querySelectorAll('#proj-list li').forEach(l=>l.classList.remove('active'));
+      li.classList.add('active'); selectedProject=p;
+      document.getElementById('btn-launch').disabled=false;
+    });
+    pEl.appendChild(li);
+  });
+}
+document.getElementById('btn-launch').addEventListener('click', () => {
+  if (!selectedProject) return;
+  ws.send(JSON.stringify({ type:'open', projectPath:selectedProject.path,
+    projectName:selectedProject.name,
+    toolId:        selectedToolId,
+    resume:        document.getElementById('chk-resume').checked,
+    dangerousSkip: document.getElementById('chk-danger').checked,
+    contextPaths:  contextPaths.map(c => c.path) }));
+  pickOv.classList.remove('open');
+});
+
+// ── WebSocket ─────────────────────────────────────────────────
+const ws = new WebSocket(`ws://${location.host}`);
+ws.addEventListener('open', () => { connEl.textContent='◉ ONLINE'; connEl.classList.add('ok'); });
+
+ws.addEventListener('message', ev => {
+  const msg = JSON.parse(ev.data);
+
+  if (msg.type === 'config-state') {
+    detectedClaude = msg.detectedClaude||'';
+    toolsList = msg.tools || [];
+    selectedToolId = msg.defaultTool || toolsList[0]?.id || null;
+    renderToolPills();
+    if (!msg.configured) openConfig(msg);
+    ws.send(JSON.stringify({ type:'list' }));
+
+  } else if (msg.type === 'tools-updated') {
+    toolsList = msg.tools || [];
+    if (!toolsList.find(t => t.id === selectedToolId)) selectedToolId = toolsList[0]?.id || null;
+    renderToolPills(); renderToolsList();
+
+  } else if (msg.type === 'sessions') {
+    canvas.innerHTML=''; panelCount=0; zTop=10;
+    msg.sessions.forEach((s, i) => {
+      statuses[s.id]=s.status;
+      buildPanel(s, defaultLayout(i, msg.sessions.length));
+    });
+    // Create default workspace if none exist
+    if (!Object.keys(wsStore.workspaces).length) {
+      wsStore.workspaces['DEFAULT'] = { panelIds: msg.sessions.map(s=>s.id), layout: snapshotLayout() };
+      wsStore.active = 'DEFAULT';
+      saveWsStore();
+    }
+    renderWsBar();
+
+  } else if (msg.type === 'session-added') {
+    statuses[msg.session.id]=msg.session.status;
+    const total = canvas.querySelectorAll('.panel').length + 1;
+    const offset = (total % 5) * 0.03;
+    buildPanel(msg.session, { l:0.1+offset, t:0.1+offset, w:0.45, h:0.45 });
+    // Add to active workspace
+    if (wsStore.active && wsStore.workspaces[wsStore.active]) {
+      wsStore.workspaces[wsStore.active].panelIds.push(msg.session.id);
+      persistToWorkspace();
+    }
+
+  } else if (msg.type === 'session-removed') {
+    const p = document.querySelector(`.panel[data-id="${msg.sessionId}"]`);
+    if (p) { p.remove(); updateCanvasHeight(); }
+    delete terms[msg.sessionId]; delete fits[msg.sessionId];
+    // Remove from all workspaces
+    Object.values(wsStore.workspaces).forEach(ws => {
+      ws.panelIds = ws.panelIds.filter(id => id !== msg.sessionId);
+      delete ws.layout[msg.sessionId];
+    });
+    persistToWorkspace();
+
+  } else if (msg.type === 'output') {
+    const t=terms[msg.sessionId];
+    if (t) { t.write(msg.data); lastOut[msg.sessionId]=Date.now(); }
+    if (statuses[msg.sessionId]!=='exited') setDot(msg.sessionId,'running');
+
+  } else if (msg.type === 'status') {
+    setDot(msg.sessionId, msg.status);
+    if (msg.status==='running') lastOut[msg.sessionId]=Date.now();
+
+  } else if (msg.type === 'folder-created') {
+    // Re-select the same tech to show the new folder highlighted
+    const tEl=document.getElementById('tech-list');
+    const techLi = [...tEl.children].find(li => li.textContent === msg.tech);
+    if (techLi) {
+      const idx = [...tEl.children].indexOf(techLi);
+      selectTech(idx, techLi);
+      // Auto-select the newly created folder
+      setTimeout(() => {
+        const pEl = document.getElementById('proj-list');
+        const newLi = [...pEl.children].find(li => li.textContent === msg.name);
+        if (newLi) newLi.click();
+      }, 50);
+    }
+
+  } else if (msg.type === 'projects') {
+    projectData=msg.data;
+    const prevTech = currentTechIdx >= 0 && projectData[currentTechIdx] ? projectData[currentTechIdx].tech : null;
+    const tEl=document.getElementById('tech-list'); tEl.innerHTML='';
+    msg.data.forEach((t,i)=>{ const li=document.createElement('li'); li.textContent=t.tech;
+      li.addEventListener('click',()=>selectTech(i,li)); tEl.appendChild(li); });
+    // Restore selected tech or default to first
+    const restoreIdx = prevTech ? msg.data.findIndex(t=>t.tech===prevTech) : 0;
+    if (msg.data.length) selectTech(Math.max(0,restoreIdx), tEl.children[Math.max(0,restoreIdx)]);
+
+  } else if (msg.type === 'detected-claude') {
+    const b=document.getElementById('cfg-detect'); b.textContent='Auto detect Claude'; b.disabled=false;
+    if (msg.path) {
+      document.getElementById('cfg-claude').value = msg.path;
+      // Also fill tool form if open
+      const tfCmd = document.getElementById('tf-cmd');
+      if (document.getElementById('tool-form').style.display !== 'none' && !tfCmd.value)
+        tfCmd.value = msg.path;
+    } else alert('claude no encontrado — ingresa la ruta manualmente');
+
+  } else if (msg.type === 'reload') {
+    location.reload();
+  }
+});
+
+ws.addEventListener('close', () => {
+  connEl.textContent='◉ OFFLINE'; connEl.classList.remove('ok');
+  document.querySelectorAll('.dot').forEach(d=>d.className='dot exited');
+  setTimeout(()=>location.reload(),1200);
+});
+</script>
+</body>
+</html>
