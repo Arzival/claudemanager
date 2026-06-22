@@ -12,7 +12,24 @@ const PORT = 3000;
 const BUFFER_LIMIT = 1000;
 const CONFIG_FILE = path.join(__dirname, 'sessions.json');
 const EXAMPLE_FILE = path.join(__dirname, 'sessions.example.json');
+const BACKGROUNDS_DIR = path.join(__dirname, 'fondos');
 const IS_WIN = process.platform === 'win32';
+
+// Background images live in fondos/ (folder is versioned, its contents are gitignored)
+if (!fs.existsSync(BACKGROUNDS_DIR)) fs.mkdirSync(BACKGROUNDS_DIR, { recursive: true });
+const IMG_TYPES = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml', '.avif': 'image/avif',
+};
+function listBackgrounds() {
+  try {
+    return fs.readdirSync(BACKGROUNDS_DIR, { withFileTypes: true })
+      .filter(d => d.isFile() && IMG_TYPES[path.extname(d.name).toLowerCase()])
+      .map(d => d.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch { return []; }
+}
 
 // Auto-create sessions.json from example if missing
 if (!fs.existsSync(CONFIG_FILE)) {
@@ -140,6 +157,19 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(data);
     });
+  } else if (req.url.startsWith('/fondos/')) {
+    const file = decodeURIComponent(req.url.slice('/fondos/'.length).split('?')[0]);
+    const ext = path.extname(file).toLowerCase();
+    const full = path.join(BACKGROUNDS_DIR, file);
+    // Block path traversal and non-image requests
+    if (!full.startsWith(BACKGROUNDS_DIR + path.sep) || !IMG_TYPES[ext]) {
+      res.writeHead(404); return res.end('Not found');
+    }
+    fs.readFile(full, (err, data) => {
+      if (err) { res.writeHead(404); return res.end('Not found'); }
+      res.writeHead(200, { 'Content-Type': IMG_TYPES[ext], 'Cache-Control': 'no-cache' });
+      res.end(data);
+    });
   } else {
     res.writeHead(404); res.end('Not found');
   }
@@ -159,6 +189,7 @@ wss.on('connection', (ws) => {
     detectedClaude: detectClaude(),
     tools: config.tools || [],
     defaultTool: config.defaultTool || 'claude',
+    backgrounds: listBackgrounds(),
   }));
 
   ws.on('message', (raw) => {
@@ -193,6 +224,9 @@ wss.on('connection', (ws) => {
       }
     } else if (type === 'detect-claude') {
       ws.send(JSON.stringify({ type: 'detected-claude', path: detectClaude() }));
+
+    } else if (type === 'list-backgrounds') {
+      ws.send(JSON.stringify({ type: 'backgrounds', files: listBackgrounds() }));
 
     } else if (type === 'close') {
       closeSession(sessionId);

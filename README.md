@@ -76,6 +76,17 @@ Agrupa tus paneles en workspaces con nombre, como si fueran perfiles de trabajo:
 
 Al cambiar de workspace los paneles no se matan — siguen corriendo en background. Al volver, aparecen en el mismo lugar donde los dejaste.
 
+## Fondos y transparencia por workspace
+
+Cada workspace puede tener su propio fondo de tablero y un nivel de transparencia para las terminales.
+
+1. Copia tus imágenes (PNG, JPG, WEBP, GIF…) dentro de la carpeta **`fondos/`** del proyecto. La carpeta está versionada, pero su contenido se ignora en git (tus fondos quedan solo en tu equipo).
+2. En la barra de workspaces haz clic en **🖼 Fondo** para abrir el selector.
+3. Elige una miniatura (o **🚫 sin fondo**). Pasa el cursor por encima para previsualizar antes de aplicar.
+4. Mueve el slider **Transparencia** para ajustar cuánto se transparenta el fondo de las terminales de ese workspace. El texto siempre se mantiene legible.
+
+El fondo y la transparencia se guardan por workspace en `localStorage`, junto con el layout.
+
 ## Layout libre — organiza los paneles como quieras
 
 Los paneles se comportan como ventanas independientes:

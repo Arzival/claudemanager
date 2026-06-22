@@ -188,6 +188,34 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
 .tool-ibtn:hover{border-color:var(--cyan);color:var(--cyan)}
 .tool-ibtn.del{border-color:rgba(255,0,110,.2);color:rgba(255,0,110,.4)}
 .tool-ibtn.del:hover{border-color:var(--pink);color:var(--pink)}
+
+/* BACKGROUND PICKER */
+#bg-modal{width:520px;max-width:94vw;display:flex;flex-direction:column;max-height:90vh}
+#bg-ws-name{color:rgba(0,245,255,.45);font-size:9px;letter-spacing:1px;text-transform:none}
+.bg-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:16px 18px;
+  overflow-y:auto;flex:1}
+.bg-tile{position:relative;aspect-ratio:16/10;border-radius:8px;cursor:pointer;overflow:hidden;
+  border:2px solid rgba(0,245,255,.12);background-size:cover;background-position:center;
+  background-color:#0a0a1e;transition:border-color .15s,transform .12s}
+.bg-tile:hover{border-color:rgba(0,245,255,.5);transform:translateY(-2px)}
+.bg-tile.active{border-color:var(--cyan);box-shadow:0 0 14px rgba(0,245,255,.4)}
+.bg-tile .bg-check{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;
+  background:var(--cyan);color:#05050f;font-size:13px;font-weight:bold;display:none;
+  align-items:center;justify-content:center;box-shadow:0 0 10px rgba(0,245,255,.6)}
+.bg-tile.active .bg-check{display:flex}
+.bg-tile.bg-none{display:flex;align-items:center;justify-content:center;
+  color:rgba(160,180,200,.4);font-size:26px;background-image:none !important}
+.bg-empty{grid-column:1/-1;color:rgba(160,180,200,.45);font-size:11px;text-align:center;
+  padding:18px;line-height:1.7}
+.bg-empty code{color:var(--cyan)}
+.bg-foot{padding:12px 18px;border-top:1px solid rgba(0,245,255,.2);background:rgba(0,0,0,.25);
+  flex-shrink:0;display:flex;flex-direction:column;gap:8px}
+.bg-foot-row{display:flex;align-items:center;gap:12px}
+.bg-foot-row label{color:rgba(0,245,255,.55);font-size:9px;letter-spacing:1.5px;
+  text-transform:uppercase;white-space:nowrap;flex-shrink:0}
+#bg-opacity{flex:1;accent-color:var(--cyan);cursor:pointer;height:4px}
+#bg-opacity-val{color:var(--cyan);font-size:11px;font-weight:bold;width:42px;text-align:right;flex-shrink:0}
+.bg-hint{color:rgba(160,180,200,.35);font-size:9px;text-align:center}
 </style>
 </head>
 <body>
@@ -203,6 +231,7 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
 <div id="ws-bar">
   <span class="ws-label">WS</span>
   <button class="ws-btn" id="ws-new">＋ Nuevo</button>
+  <button class="ws-btn" id="ws-bg">🖼 Fondo</button>
   <div class="ws-divider"></div>
   <div id="ws-tabs"></div>
 </div>
@@ -335,6 +364,25 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   </div>
 </div>
 
+<!-- Background picker modal -->
+<div class="mo" id="bg-overlay">
+  <div class="mbox" id="bg-modal">
+    <div class="mhdr">
+      <span class="mhdr-t">🖼 FONDO DE WORKSPACE &nbsp;<span id="bg-ws-name"></span></span>
+      <button class="mcls" id="bg-close">✕</button>
+    </div>
+    <div class="bg-grid" id="bg-grid"></div>
+    <div class="bg-foot">
+      <div class="bg-foot-row">
+        <label>Transparencia</label>
+        <input type="range" id="bg-opacity" min="0" max="85" step="1" value="0">
+        <span id="bg-opacity-val">0%</span>
+      </div>
+      <div class="bg-hint">Pasa el cursor sobre una opción para previsualizar</div>
+    </div>
+  </div>
+</div>
+
 <script>
 const gridWrap = document.getElementById('grid-wrap');
 const canvas   = document.getElementById('canvas');
@@ -342,9 +390,22 @@ const connEl   = document.getElementById('conn');
 const clockEl  = document.getElementById('clock');
 const pickOv   = document.getElementById('pick-overlay');
 const cfgOv    = document.getElementById('cfg-overlay');
+const bgOv     = document.getElementById('bg-overlay');
 const terms = {}, fits = {}, lastOut = {}, statuses = {}, lastResizeTime = {};
 let projectData = [], selectedProject = null, panelCount = 0, detectedClaude = '', currentTechIdx = -1;
 let toolsList = [], selectedToolId = null;
+let backgrounds = [];
+
+// Base color behind the terminal text. Workspace transparency lowers its alpha
+// so the board background shows through, while glyphs stay fully opaque.
+const TERM_BG_RGB = '9,9,22';
+const TERM_THEME = {
+  background:'#090916',foreground:'#b0c8dc',cursor:'#00f5ff',cursorAccent:'#090916',
+  selectionBackground:'rgba(0,245,255,.18)',black:'#090916',red:'#ff006e',green:'#39ff14',
+  yellow:'#ffd60a',blue:'#0080ff',magenta:'#bf00ff',cyan:'#00f5ff',white:'#a0b4c8',
+  brightBlack:'#2a3a4a',brightRed:'#ff4090',brightGreen:'#80ff50',brightYellow:'#ffe060',
+  brightBlue:'#40a0ff',brightMagenta:'#df80ff',brightCyan:'#60ffff',brightWhite:'#e0f0ff',
+};
 
 // ── Tools ─────────────────────────────────────────────────────
 function renderToolPills() {
@@ -440,6 +501,36 @@ function saveWsStore() {
   localStorage.setItem(WS_KEY, JSON.stringify(wsStore));
 }
 
+// Merge fields into a workspace WITHOUT dropping its bg / opacity settings
+function writeWs(name, fields) {
+  wsStore.workspaces[name] = { ...(wsStore.workspaces[name] || {}), ...fields };
+}
+
+// ── Per-workspace background & terminal transparency ──────────
+// bgOpacity = alpha of the terminal background (1 = solid, lower = see-through)
+function activeWs() { return wsStore.active ? wsStore.workspaces[wsStore.active] : null; }
+function wsBgAlpha() {
+  const ws = activeWs();
+  return (ws && typeof ws.bgOpacity === 'number') ? ws.bgOpacity : 1;
+}
+function applyTermOpacity(id) {
+  const t = terms[id];
+  const a = wsBgAlpha();
+  const rgba = `rgba(${TERM_BG_RGB},${a})`;
+  if (t) t.options.theme = { ...TERM_THEME, background: rgba };
+  const p = document.querySelector(`.panel[data-id="${id}"]`);
+  if (p) p.style.background = rgba;
+}
+function applyAllTermOpacity() { Object.keys(terms).forEach(applyTermOpacity); }
+function applyWorkspaceBg(bgName) {
+  const bg = bgName !== undefined ? bgName : (activeWs() && activeWs().bg);
+  gridWrap.style.backgroundImage    = bg ? `url('/fondos/${encodeURIComponent(bg)}')` : '';
+  gridWrap.style.backgroundSize     = 'cover';
+  gridWrap.style.backgroundPosition = 'center';
+  gridWrap.style.backgroundRepeat   = 'no-repeat';
+}
+function applyWorkspaceTheme() { applyWorkspaceBg(); applyAllTermOpacity(); }
+
 function snapshotLayout() {
   const W = gridWrap.clientWidth, H = gridWrap.clientHeight;
   const layout = {};
@@ -467,10 +558,7 @@ function persistToWorkspace() {
   clearTimeout(wsSaveTimer);
   wsSaveTimer = setTimeout(() => {
     if (!wsStore.active) return;
-    wsStore.workspaces[wsStore.active] = {
-      panelIds: visiblePanelIds(),
-      layout: snapshotLayout(),
-    };
+    writeWs(wsStore.active, { panelIds: visiblePanelIds(), layout: snapshotLayout() });
     saveWsStore();
   }, 300);
 }
@@ -501,11 +589,12 @@ function applyWorkspace(name) {
 
 function switchWorkspace(name) {
   if (wsStore.active) {
-    wsStore.workspaces[wsStore.active] = { panelIds: visiblePanelIds(), layout: snapshotLayout() };
+    writeWs(wsStore.active, { panelIds: visiblePanelIds(), layout: snapshotLayout() });
   }
   wsStore.active = name;
   saveWsStore();
   applyWorkspace(name);
+  applyWorkspaceTheme();
   renderWsBar();
 }
 
@@ -516,15 +605,15 @@ function newWorkspace() {
   if (wsStore.workspaces[n] && !confirm(`"${n}" ya existe. ¿Sobreescribir?`)) return;
   // Save current before switching
   if (wsStore.active)
-    wsStore.workspaces[wsStore.active] = { panelIds: visiblePanelIds(), layout: snapshotLayout() };
+    writeWs(wsStore.active, { panelIds: visiblePanelIds(), layout: snapshotLayout() });
   // New workspace starts EMPTY — hide all panels
-  wsStore.workspaces[n] = { panelIds: [], layout: {} };
+  wsStore.workspaces[n] = { panelIds: [], layout: {}, bg: null, bgOpacity: 1 };
   wsStore.active = n;
   canvas.querySelectorAll('.panel').forEach(p => {
     p.dataset.hidden = '1';
     p.style.visibility = 'hidden'; p.style.pointerEvents = 'none';
   });
-  updateCanvasHeight(); saveWsStore(); renderWsBar();
+  updateCanvasHeight(); saveWsStore(); applyWorkspaceTheme(); renderWsBar();
 }
 
 function deleteWorkspace(name) {
@@ -533,6 +622,7 @@ function deleteWorkspace(name) {
   const keys = Object.keys(wsStore.workspaces);
   wsStore.active = keys[0] || null;
   if (wsStore.active) applyWorkspace(wsStore.active);
+  applyWorkspaceTheme();
   saveWsStore(); renderWsBar();
 }
 
@@ -761,11 +851,8 @@ function buildPanel(s, lay) {
   // Terminal
   const term = new Terminal({
     cols: s.cols || 80, rows: s.rows || 24,
-    theme:{background:'#090916',foreground:'#b0c8dc',cursor:'#00f5ff',cursorAccent:'#090916',
-      selectionBackground:'rgba(0,245,255,.18)',black:'#090916',red:'#ff006e',green:'#39ff14',
-      yellow:'#ffd60a',blue:'#0080ff',magenta:'#bf00ff',cyan:'#00f5ff',white:'#a0b4c8',
-      brightBlack:'#2a3a4a',brightRed:'#ff4090',brightGreen:'#80ff50',brightYellow:'#ffe060',
-      brightBlue:'#40a0ff',brightMagenta:'#df80ff',brightCyan:'#60ffff',brightWhite:'#e0f0ff'},
+    allowTransparency: true,
+    theme: { ...TERM_THEME },
     fontSize:13,fontFamily:"'Courier New',monospace",cursorBlink:true,scrollback:5000,
   });
   const fit = new FitAddon.FitAddon();
@@ -774,6 +861,7 @@ function buildPanel(s, lay) {
   void twEl.offsetHeight; // force layout before open so xterm measures correct char dimensions
   term.open(twEl);
   terms[s.id] = term; fits[s.id] = fit;
+  applyTermOpacity(s.id);
   try { fit.fit(); } catch {}
   requestAnimationFrame(() => debouncedFit(s.id, 0));
   // Buffered output from server arrives after the initial fit and can overwrite
@@ -845,6 +933,78 @@ setInterval(() => {
 }, 1000);
 
 document.getElementById('ws-new').addEventListener('click', newWorkspace);
+
+// ── Background picker ─────────────────────────────────────────
+const bgGridEl = document.getElementById('bg-grid');
+const bgOpEl   = document.getElementById('bg-opacity');
+const bgOpVal  = document.getElementById('bg-opacity-val');
+
+function renderBgGrid() {
+  const ws = activeWs();
+  const current = ws ? ws.bg : null;
+  bgGridEl.innerHTML = '';
+
+  // "No background" tile
+  const none = document.createElement('div');
+  none.className = 'bg-tile bg-none' + (!current ? ' active' : '');
+  none.title = 'Sin fondo';
+  none.innerHTML = '🚫<div class="bg-check">✓</div>';
+  none.addEventListener('click', () => selectBg(null));
+  none.addEventListener('mouseenter', () => applyWorkspaceBg(null));
+  none.addEventListener('mouseleave', () => applyWorkspaceBg());
+  bgGridEl.appendChild(none);
+
+  backgrounds.forEach(file => {
+    const tile = document.createElement('div');
+    tile.className = 'bg-tile' + (current === file ? ' active' : '');
+    tile.style.backgroundImage = `url('/fondos/${encodeURIComponent(file)}')`;
+    tile.title = file;
+    tile.innerHTML = '<div class="bg-check">✓</div>';
+    tile.addEventListener('click', () => selectBg(file));
+    tile.addEventListener('mouseenter', () => applyWorkspaceBg(file));
+    tile.addEventListener('mouseleave', () => applyWorkspaceBg());
+    bgGridEl.appendChild(tile);
+  });
+
+  if (!backgrounds.length) {
+    const hint = document.createElement('div');
+    hint.className = 'bg-empty';
+    hint.innerHTML = 'No hay imágenes todavía.<br>Copia tus fondos (PNG / JPG / WEBP…) a la carpeta <code>fondos/</code> del proyecto y vuelve a abrir este panel.';
+    bgGridEl.appendChild(hint);
+  }
+}
+
+function selectBg(file) {
+  if (!wsStore.active) return;
+  writeWs(wsStore.active, { bg: file });
+  saveWsStore();
+  applyWorkspaceBg();
+  renderBgGrid();
+}
+
+// Slider value = transparency % (0 = solid). alpha = 1 - t/100
+bgOpEl.addEventListener('input', () => {
+  const t = parseInt(bgOpEl.value, 10);
+  bgOpVal.textContent = t + '%';
+  if (!wsStore.active) return;
+  writeWs(wsStore.active, { bgOpacity: 1 - t / 100 });
+  applyAllTermOpacity();
+});
+bgOpEl.addEventListener('change', saveWsStore);
+
+function openBgPicker() {
+  if (!wsStore.active) { alert('Crea o selecciona un workspace primero.'); return; }
+  document.getElementById('bg-ws-name').textContent = '› ' + wsStore.active;
+  const t = Math.round((1 - wsBgAlpha()) * 100);
+  bgOpEl.value = t; bgOpVal.textContent = t + '%';
+  renderBgGrid();
+  bgOv.classList.add('open');
+  ws.send(JSON.stringify({ type: 'list-backgrounds' })); // refresh in case files changed
+}
+
+document.getElementById('ws-bg').addEventListener('click', openBgPicker);
+document.getElementById('bg-close').addEventListener('click', () => { applyWorkspaceBg(); bgOv.classList.remove('open'); });
+bgOv.addEventListener('click', e => { if (e.target === bgOv) { applyWorkspaceBg(); bgOv.classList.remove('open'); } });
 
 setInterval(() => { clockEl.textContent = new Date().toLocaleTimeString('en-US',{hour12:false}); }, 1000);
 clockEl.textContent = new Date().toLocaleTimeString('en-US',{hour12:false});
@@ -955,6 +1115,7 @@ ws.addEventListener('message', ev => {
 
   if (msg.type === 'config-state') {
     detectedClaude = msg.detectedClaude||'';
+    backgrounds = msg.backgrounds || [];
     toolsList = msg.tools || [];
     selectedToolId = msg.defaultTool || toolsList[0]?.id || null;
     renderToolPills();
@@ -974,10 +1135,11 @@ ws.addEventListener('message', ev => {
     });
     // Create default workspace if none exist
     if (!Object.keys(wsStore.workspaces).length) {
-      wsStore.workspaces['DEFAULT'] = { panelIds: msg.sessions.map(s=>s.id), layout: snapshotLayout() };
+      wsStore.workspaces['DEFAULT'] = { panelIds: msg.sessions.map(s=>s.id), layout: snapshotLayout(), bg: null, bgOpacity: 1 };
       wsStore.active = 'DEFAULT';
       saveWsStore();
     }
+    applyWorkspaceTheme();
     renderWsBar();
     // After panels are built (with correct layout via getSavedLayout), just show/hide per workspace.
     // Don't re-apply layout or re-fit — buildPanel already did it correctly.
@@ -1075,6 +1237,10 @@ ws.addEventListener('message', ev => {
   } else if (msg.type === 'image-pasted') {
     const t = terms[msg.sessionId];
     if (t) t.paste(msg.path);
+
+  } else if (msg.type === 'backgrounds') {
+    backgrounds = msg.files || [];
+    if (bgOv.classList.contains('open')) renderBgGrid();
 
   } else if (msg.type === 'reload') {
     location.reload();

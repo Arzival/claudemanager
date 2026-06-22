@@ -1,0 +1,4 @@
+# Ignora todas las imágenes de fondo que pongas aquí,
+# pero mantiene la carpeta versionada (este .gitignore sí se sube).
+*
+!.gitignore
