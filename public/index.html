@@ -6,6 +6,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-webgl@0.16.0/lib/xterm-addon-webgl.js"></script>
 <style>
 :root{--cyan:#00f5ff;--pink:#ff006e;--yellow:#ffd60a;--green:#39ff14;--bg:#05050f;--bg2:#090916;--border:rgba(0,245,255,.35)}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -853,13 +854,20 @@ function buildPanel(s, lay) {
     cols: s.cols || 80, rows: s.rows || 24,
     allowTransparency: true,
     theme: { ...TERM_THEME },
-    fontSize:13,fontFamily:"'Courier New',monospace",cursorBlink:true,scrollback:5000,
+    fontSize:13,fontFamily:"'Courier New',monospace",cursorBlink:true,scrollback:2000,
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   const twEl = document.getElementById(`tw-${s.id}`);
   void twEl.offsetHeight; // force layout before open so xterm measures correct char dimensions
   term.open(twEl);
+  // WebGL renderer: big rendering win with many terminals. Must load after open();
+  // fall back to the default DOM renderer if WebGL is unavailable or its context is lost.
+  try {
+    const webgl = new WebglAddon.WebglAddon();
+    webgl.onContextLoss(() => { try { webgl.dispose(); } catch {} });
+    term.loadAddon(webgl);
+  } catch {}
   terms[s.id] = term; fits[s.id] = fit;
   applyTermOpacity(s.id);
   try { fit.fit(); } catch {}

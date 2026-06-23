@@ -9,7 +9,9 @@ process.on('uncaughtException', err => console.error('[uncaughtException]', err.
 process.on('unhandledRejection', err => console.error('[unhandledRejection]', err));
 
 const PORT = 3000;
-const BUFFER_LIMIT = 1000;
+const BUFFER_LIMIT = 1000;          // max chunks of replay history per session
+const BUFFER_BYTES = 256 * 1024;    // cap replay history at ~256 KB per session
+const FLUSH_MS = 16; // coalesce PTY output into one broadcast per frame
 const CONFIG_FILE = path.join(__dirname, 'sessions.json');
 const EXAMPLE_FILE = path.join(__dirname, 'sessions.example.json');
 const BACKGROUNDS_DIR = path.join(__dirname, 'fondos');
@@ -72,7 +74,19 @@ function isConfigured() {
 
 const sessions = new Map();
 const buffers = new Map();
+const bufferBytes = new Map(); // id -> total byte length of buffers.get(id)
+const pending = new Map(); // id -> { chunks: [], timer } — output waiting to be flushed
 const clients = new Set();
+
+function flushOutput(id) {
+  const p = pending.get(id);
+  if (!p) return;
+  p.timer = null;
+  if (!p.chunks.length) return;
+  const data = p.chunks.join('');
+  p.chunks.length = 0;
+  broadcast({ type: 'output', sessionId: id, data });
+}
 
 function broadcast(msg) {
   const str = JSON.stringify(msg);
@@ -105,10 +119,21 @@ function spawnSession(cfg) {
     const buf = buffers.get(id);
     if (!buf) return;
     buf.push(data);
-    if (buf.length > BUFFER_LIMIT) buf.shift();
-    broadcast({ type: 'output', sessionId: id, data });
+    // Bound replay history by both chunk count and total bytes so a single
+    // noisy session can't retain unbounded memory.
+    let bytes = (bufferBytes.get(id) || 0) + Buffer.byteLength(data);
+    while (buf.length > BUFFER_LIMIT || (bytes > BUFFER_BYTES && buf.length > 1))
+      bytes -= Buffer.byteLength(buf.shift());
+    bufferBytes.set(id, bytes);
+    // Coalesce bursts of output into a single broadcast per frame to cut
+    // message count and JSON.stringify churn under heavy streaming.
+    let p = pending.get(id);
+    if (!p) { p = { chunks: [], timer: null }; pending.set(id, p); }
+    p.chunks.push(data);
+    if (!p.timer) p.timer = setTimeout(() => flushOutput(id), FLUSH_MS);
   });
   proc.onExit(() => {
+    flushOutput(id); // emit any buffered output before the exit status
     const s = sessions.get(id);
     if (s) s.status = 'exited';
     broadcast({ type: 'status', sessionId: id, status: 'exited' });
@@ -120,8 +145,12 @@ function closeSession(id) {
   const s = sessions.get(id);
   if (!s) return;
   try { s.proc && s.proc.kill(); } catch {}
+  const p = pending.get(id);
+  if (p && p.timer) clearTimeout(p.timer);
+  pending.delete(id);
   sessions.delete(id);
   buffers.delete(id);
+  bufferBytes.delete(id);
   config.sessions = (config.sessions || []).filter(c => c.id !== id);
   saveConfig();
   broadcast({ type: 'session-removed', sessionId: id });
