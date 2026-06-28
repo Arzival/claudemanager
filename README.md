@@ -119,6 +119,22 @@ Los tokens solo se consumen cuando la IA procesa texto y genera una respuesta. E
 - ❌ Respuestas que genera la IA → consumen tokens
 - ❌ Archivos que la IA lee para darte contexto → consumen tokens
 
+## Barra de consumo (parte inferior)
+
+Una barra fija en el borde inferior de la página —siempre visible, fuera del scroll del tablero— muestra tu consumo **global** de la **ventana de uso de 5 horas**, agregando todas tus sesiones de todos los proyectos:
+
+- **% usado** — porcentaje aproximado de tu ventana de 5h. Se calcula con una suma de tokens **ponderada por costo** (entrada, salida, escritura y lectura de caché) sobre un presupuesto estimado.
+- **⟳ se restablece en …** — cuenta regresiva en vivo hasta que la ventana se reinicia (baja segundo a segundo).
+- **Sesión activa** — el panel en el que trabajas y qué tan llena está su ventana de contexto.
+- **Σ sesiones** — total de tokens de entrada/salida acumulados.
+- **hace Xs** + botón **⟳** — cuándo fue la última lectura y un botón para refrescar al instante.
+
+El consumo se actualiza **automáticamente cada 60 segundos** (o al instante con **⟳**). La cuenta regresiva se anima cada segundo en local.
+
+> El % es una **aproximación local** calculada desde los registros en disco de cada herramienta; el límite real lo lleva el proveedor en sus servidores, así que puede variar un poco. **Haz clic en la barra** para ajustar el presupuesto estimado hasta que el % cuadre con el panel oficial de tu proveedor.
+>
+> El lector de consumo es **pluggable por herramienta**: cada CLI define de dónde se leen sus tokens, así que se puede extender a otras herramientas que persistan su uso en disco.
+
 ## Puntos de estado
 
 - 🟢 Verde — sesión activa con output reciente

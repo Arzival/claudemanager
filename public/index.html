@@ -11,7 +11,7 @@
 :root{--cyan:#00f5ff;--pink:#ff006e;--yellow:#ffd60a;--green:#39ff14;--bg:#05050f;--bg2:#090916;--border:rgba(0,245,255,.35)}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden;font-family:'Courier New',monospace;background:var(--bg);color:#8aa0b4}
-body{background-image:linear-gradient(rgba(0,245,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(0,245,255,.018) 1px,transparent 1px);background-size:36px 36px}
+body{display:flex;flex-direction:column;background-image:linear-gradient(rgba(0,245,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(0,245,255,.018) 1px,transparent 1px);background-size:36px 36px}
 header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   background:#07071a;border-bottom:1px solid var(--border);box-shadow:0 2px 20px rgba(0,245,255,.1);flex-shrink:0}
 .logo{font-size:14px;font-weight:bold;letter-spacing:4px;color:var(--cyan);text-shadow:0 0 10px var(--cyan)}
@@ -69,8 +69,44 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
 #ws-tabs::-webkit-scrollbar{display:none}
 
 /* FREE-FORM CANVAS */
-#grid-wrap{height:calc(100vh - 72px);overflow:auto;user-select:none}
+#grid-wrap{flex:1;min-height:0;overflow:auto;user-select:none}
 #canvas{position:relative;width:100%;min-height:100%}
+
+/* STATUS BAR — fixed below the infinite-scroll canvas, never scrolls */
+#status-bar{
+  height:34px;flex-shrink:0;display:flex;align-items:center;gap:10px;padding:0 16px;
+  background:#07071a;border-top:1px solid var(--border);
+  box-shadow:0 -2px 16px rgba(0,245,255,.1);font-size:11px;color:#9ab0c4;
+  white-space:nowrap;overflow:hidden;
+}
+.sb-label{color:rgba(0,245,255,.45);font-size:8px;letter-spacing:3px;text-transform:uppercase;flex-shrink:0}
+/* 5h window (the hero) */
+#sb-win-wrap{width:170px;height:12px;background:rgba(0,245,255,.07);border:1px solid rgba(0,245,255,.25);
+  border-radius:6px;overflow:hidden;flex-shrink:0;cursor:pointer}
+#sb-win-wrap:hover{border-color:rgba(0,245,255,.5)}
+#sb-win-bar{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),#0080ff);
+  box-shadow:0 0 10px rgba(0,245,255,.5);transition:width .5s}
+#sb-win-bar.win-warm{background:linear-gradient(90deg,var(--yellow),#ff9500);box-shadow:0 0 10px rgba(255,214,10,.5)}
+#sb-win-bar.win-hot{background:linear-gradient(90deg,var(--pink),#ff4040);box-shadow:0 0 10px rgba(255,0,110,.5)}
+#sb-win-pct{color:var(--cyan);font-weight:bold;font-size:12px;flex-shrink:0;text-shadow:0 0 6px rgba(0,245,255,.3);min-width:42px}
+#sb-win-reset{color:var(--green);font-weight:bold;font-size:12px;flex-shrink:0;
+  text-shadow:0 0 7px rgba(57,255,20,.4);letter-spacing:.3px}
+#sb-win-reset.sb-empty{color:rgba(160,180,200,.35);font-weight:normal;text-shadow:none}
+.sb-reset-ico{color:var(--green)}
+/* active conversation context (secondary) */
+#sb-session{color:rgba(0,245,255,.75);font-weight:bold;letter-spacing:.5px;flex-shrink:0;
+  max-width:220px;overflow:hidden;text-overflow:ellipsis}
+#sb-session.sb-empty{color:rgba(160,180,200,.3);font-weight:normal}
+#sb-ctx-txt{color:rgba(160,180,200,.5);flex-shrink:0}
+.sb-sep{width:1px;height:16px;background:rgba(0,245,255,.18);flex-shrink:0}
+#sb-total{margin-left:auto;color:rgba(255,214,10,.7);letter-spacing:.5px;flex-shrink:0}
+#sb-updated{color:rgba(160,180,200,.4);font-size:9px;flex-shrink:0}
+#sb-refresh{background:transparent;border:1px solid rgba(0,245,255,.25);color:rgba(0,245,255,.6);
+  font-family:inherit;font-size:12px;line-height:1;padding:3px 7px;cursor:pointer;border-radius:3px;
+  flex-shrink:0;transition:border-color .15s,color .15s,box-shadow .15s}
+#sb-refresh:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 8px rgba(0,245,255,.3)}
+#sb-refresh.spinning{animation:sbspin .6s linear}
+@keyframes sbspin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 
 /* PANEL — absolutely positioned, freely movable */
 .panel{
@@ -237,6 +273,18 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   <div id="ws-tabs"></div>
 </div>
 <div id="grid-wrap"><div id="canvas"></div></div>
+<div id="status-bar">
+  <span class="sb-label">Sesión 5h</span>
+  <div id="sb-win-wrap" title="Consumo global de la ventana de 5h (aprox, todas tus sesiones). Clic para ajustar tu presupuesto estimado."><div id="sb-win-bar"></div></div>
+  <span id="sb-win-pct">—</span>
+  <span id="sb-win-reset" class="sb-empty">sin actividad reciente</span>
+  <span class="sb-sep"></span>
+  <span id="sb-session" class="sb-empty">— sesión activa —</span>
+  <span id="sb-ctx-txt"></span>
+  <span id="sb-total"></span>
+  <span id="sb-updated"></span>
+  <button id="sb-refresh" title="Actualizar consumo ahora">⟳</button>
+</div>
 
 <!-- Project picker -->
 <div class="mo" id="pick-overlay">
@@ -393,6 +441,8 @@ const pickOv   = document.getElementById('pick-overlay');
 const cfgOv    = document.getElementById('cfg-overlay');
 const bgOv     = document.getElementById('bg-overlay');
 const terms = {}, fits = {}, lastOut = {}, statuses = {}, lastResizeTime = {};
+let usageData = {};          // sessionId -> usage object (or null if N/A)
+let activeSessionId = null;  // session reflected in the status bar
 let projectData = [], selectedProject = null, panelCount = 0, detectedClaude = '', currentTechIdx = -1;
 let toolsList = [], selectedToolId = null;
 let backgrounds = [];
@@ -843,8 +893,8 @@ function buildPanel(s, lay) {
   initResizeHandle(panel, panel.querySelector('.rh-t'), ['t']);
   initResizeHandle(panel, panel.querySelector('.rh-br'), ['r','b']);
 
-  // Raise on click
-  panel.addEventListener('mousedown', () => raise(panel));
+  // Raise on click + reflect this session in the status bar
+  panel.addEventListener('mousedown', () => { raise(panel); setActiveSession(s.id); });
 
   panel.querySelector('.closebtn').addEventListener('click', () =>
     ws.send(JSON.stringify({ type:'close', sessionId:s.id })));
@@ -900,7 +950,7 @@ function buildPanel(s, lay) {
   new ResizeObserver(() => debouncedFit(s.id)).observe(twEl);
 
   // Click anywhere on terminal wrapper → focus xterm so paste always works
-  twEl.addEventListener('click', () => term.focus());
+  twEl.addEventListener('click', () => { term.focus(); setActiveSession(s.id); });
 
   // Image paste: intercept clipboard images, save to server temp file, paste path into terminal
   twEl.addEventListener('paste', e => {
@@ -1114,9 +1164,133 @@ document.getElementById('btn-launch').addEventListener('click', () => {
   pickOv.classList.remove('open');
 });
 
+// ── Token / session usage status bar ──────────────────────────
+const sbWinWrap  = document.getElementById('sb-win-wrap');
+const sbWinBar   = document.getElementById('sb-win-bar');
+const sbWinPct   = document.getElementById('sb-win-pct');
+const sbWinReset = document.getElementById('sb-win-reset');
+const sbSession  = document.getElementById('sb-session');
+const sbCtxTxt   = document.getElementById('sb-ctx-txt');
+const sbTotal    = document.getElementById('sb-total');
+const sbUpdated  = document.getElementById('sb-updated');
+const sbRefresh  = document.getElementById('sb-refresh');
+
+let windowInfo = null; // { active, resetAt, used, windowMs } — global 5h window
+let lastUsageAt = 0;   // when the last usage payload arrived (for "actualizado hace…")
+const BUDGET_KEY = 'cm-usage-budget';
+const DEFAULT_BUDGET = 9400000; // calibrated (cost-weighted) so the bar ≈ claude.ai's %
+function getBudget() { return parseInt(localStorage.getItem(BUDGET_KEY) || '', 10) || DEFAULT_BUDGET; }
+
+function fmtTokens(n) {
+  if (!n) return '0';
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+function fmtDur(ms) {
+  if (ms <= 0) return 'ahora';
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  // Show seconds when under an hour so the countdown visibly ticks
+  return h > 0 ? `${h}h ${m}m` : `${m}m ${String(s).padStart(2, '0')}s`;
+}
+function panelName(id) {
+  const el = document.querySelector(`.panel[data-id="${id}"] .ph-name`);
+  return el ? el.textContent : '';
+}
+function setActiveSession(id) {
+  if (activeSessionId === id) return;
+  activeSessionId = id;
+  renderStatusBar();
+}
+
+// Live reset countdown — ticks every second from the stored resetAt
+function renderWindowReset() {
+  if (!windowInfo || !windowInfo.active) {
+    sbWinReset.className = 'sb-empty';
+    sbWinReset.textContent = 'sin actividad reciente';
+    return;
+  }
+  sbWinReset.className = '';
+  const rem = windowInfo.resetAt - Date.now();
+  sbWinReset.innerHTML = `<span class="sb-reset-ico">⟳</span> se restablece en ${fmtDur(rem)} · ${fmtTokens(windowInfo.used)} tok`;
+}
+
+// Per-second tick: smooth reset countdown + "actualizado hace Xs"
+function tickStatusBar() {
+  renderWindowReset();
+  if (!lastUsageAt) { sbUpdated.textContent = ''; return; }
+  const s = Math.floor((Date.now() - lastUsageAt) / 1000);
+  sbUpdated.textContent = s < 60 ? `hace ${s}s` : `hace ${Math.floor(s / 60)}m`;
+}
+setInterval(tickStatusBar, 1000);
+
+function renderStatusBar() {
+  // ── Global 5h window (hero) ──
+  if (windowInfo && windowInfo.active) {
+    const pct = Math.min(100, Math.round(windowInfo.used / getBudget() * 100));
+    sbWinBar.style.width = pct + '%';
+    sbWinBar.className = pct > 85 ? 'win-hot' : pct > 60 ? 'win-warm' : '';
+    sbWinPct.textContent = `~${pct}%`;
+  } else {
+    sbWinBar.style.width = '0%';
+    sbWinPct.textContent = '—';
+  }
+  renderWindowReset();
+
+  // ── Active conversation context (secondary) ──
+  const u = activeSessionId ? usageData[activeSessionId] : null;
+  const name = activeSessionId ? panelName(activeSessionId) : '';
+  if (!u) {
+    sbSession.className = 'sb-empty';
+    sbSession.textContent = activeSessionId ? `${name} · sin datos` : '— sesión activa —';
+    sbCtxTxt.textContent = '';
+  } else {
+    sbSession.className = '';
+    const model = (u.model || '').replace(/^claude-/, '').replace(/-\d{6,8}$/, '');
+    sbSession.textContent = name + (model ? `  [${model}]` : '');
+    const cpct = u.contextWindow ? Math.min(100, Math.round(u.context / u.contextWindow * 100)) : 0;
+    sbCtxTxt.textContent = `· ctx ${cpct}% (${fmtTokens(u.context)})`;
+  }
+
+  // ── Session total tokens (right) ──
+  let tIn = 0, tOut = 0, any = false;
+  for (const us of Object.values(usageData)) { if (us) { any = true; tIn += us.input; tOut += us.output; } }
+  sbTotal.textContent = any ? `Σ sesiones ↓${fmtTokens(tIn)} ↑${fmtTokens(tOut)}` : '';
+}
+
+// Click the bar to calibrate the estimated 5h budget used for the %
+sbWinWrap.addEventListener('click', () => {
+  const cur = getBudget();
+  const v = prompt('Presupuesto estimado de tokens de tu ventana de 5h (para calcular el %).\n' +
+                   'Súbelo o bájalo hasta que el % cuadre con claude.ai:', cur);
+  if (v === null) return;
+  const n = parseInt(v, 10);
+  if (!isNaN(n) && n > 0) { localStorage.setItem(BUDGET_KEY, String(n)); renderStatusBar(); }
+});
+
+function requestUsage(force) {
+  if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'usage', force: !!force }));
+}
+
+let usagePoll;
+function startUsagePolling() {
+  clearInterval(usagePoll);
+  requestUsage(true);                       // immediate fresh read on (re)connect
+  usagePoll = setInterval(() => requestUsage(false), 60000); // auto every 60s
+}
+
+// Manual refresh button — forces a fresh server-side recompute
+sbRefresh.addEventListener('click', () => {
+  sbRefresh.classList.remove('spinning');
+  void sbRefresh.offsetWidth;               // restart the spin animation
+  sbRefresh.classList.add('spinning');
+  requestUsage(true);
+});
+
 // ── WebSocket ─────────────────────────────────────────────────
 const ws = new WebSocket(`ws://${location.host}`);
-ws.addEventListener('open', () => { connEl.textContent='◉ ONLINE'; connEl.classList.add('ok'); });
+ws.addEventListener('open', () => { connEl.textContent='◉ ONLINE'; connEl.classList.add('ok'); startUsagePolling(); });
 
 ws.addEventListener('message', ev => {
   const msg = JSON.parse(ev.data);
@@ -1185,7 +1359,8 @@ ws.addEventListener('message', ev => {
   } else if (msg.type === 'session-removed') {
     const p = document.querySelector(`.panel[data-id="${msg.sessionId}"]`);
     if (p) { p.remove(); updateCanvasHeight(); }
-    delete terms[msg.sessionId]; delete fits[msg.sessionId];
+    delete terms[msg.sessionId]; delete fits[msg.sessionId]; delete usageData[msg.sessionId];
+    if (activeSessionId === msg.sessionId) { activeSessionId = null; renderStatusBar(); }
     // Remove from all workspaces
     Object.values(wsStore.workspaces).forEach(ws => {
       ws.panelIds = ws.panelIds.filter(id => id !== msg.sessionId);
@@ -1245,6 +1420,18 @@ ws.addEventListener('message', ev => {
   } else if (msg.type === 'image-pasted') {
     const t = terms[msg.sessionId];
     if (t) t.paste(msg.path);
+
+  } else if (msg.type === 'usage') {
+    usageData = {};
+    msg.sessions.forEach(s => { usageData[s.id] = s.usage; });
+    windowInfo = msg.window || null;
+    lastUsageAt = Date.now();
+    // Default the bar to the first session that actually reports usage
+    if (!activeSessionId || !document.querySelector(`.panel[data-id="${activeSessionId}"]`)) {
+      const first = msg.sessions.find(s => s.usage);
+      activeSessionId = first ? first.id : activeSessionId;
+    }
+    renderStatusBar();
 
   } else if (msg.type === 'backgrounds') {
     backgrounds = msg.files || [];

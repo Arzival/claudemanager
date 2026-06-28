@@ -170,6 +170,170 @@ function scanProjects() {
     .filter(t => t.projects.length > 0);
 }
 
+// ── Token / session usage (pluggable per tool) ────────────────
+// Each provider reads a tool's own on-disk records. Claude Code persists every
+// session as JSONL under ~/.claude/projects/<cwd-with-slashes-as-dashes>/.
+const CONTEXT_WINDOW = 200000;            // approx window for the % fill bar
+const usageCache = new Map();             // filePath -> incremental parse state
+
+function claudeProjectDir(cwd) {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  return path.join(home, '.claude', 'projects', cwd.replace(/[/.]/g, '-'));
+}
+
+// Newest .jsonl in the project dir = the most recent session for that cwd
+function latestTranscript(cwd) {
+  const dir = claudeProjectDir(cwd);
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return null; }
+  let best = null, bestM = -1;
+  for (const f of entries) {
+    if (!f.endsWith('.jsonl')) continue;
+    const fp = path.join(dir, f);
+    let st; try { st = fs.statSync(fp); } catch { continue; }
+    if (st.mtimeMs > bestM) { bestM = st.mtimeMs; best = fp; }
+  }
+  return best;
+}
+
+// Read usage incrementally: only parse bytes appended since last poll.
+function readClaudeUsage(session) {
+  const file = latestTranscript(session.cwd);
+  if (!file) return null;
+  let st; try { st = fs.statSync(file); } catch { return null; }
+  let c = usageCache.get(file);
+  if (!c || c.ino !== st.ino || st.size < c.size) {
+    c = { ino: st.ino, size: 0, leftover: '',
+          totals: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, turns: 0 },
+          latest: { context: 0, model: '' } };
+    usageCache.set(file, c);
+  }
+  if (st.size > c.size) {
+    const len = st.size - c.size;
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, len, c.size); } finally { fs.closeSync(fd); }
+    c.size = st.size;
+    const lines = (c.leftover + buf.toString('utf8')).split('\n');
+    c.leftover = lines.pop(); // trailing partial line, completed on next read
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let obj; try { obj = JSON.parse(line); } catch { continue; }
+      const u = obj.message && obj.message.usage;
+      if (!u) continue;
+      c.totals.input       += u.input_tokens || 0;
+      c.totals.output      += u.output_tokens || 0;
+      c.totals.cacheRead   += u.cache_read_input_tokens || 0;
+      c.totals.cacheCreate += u.cache_creation_input_tokens || 0;
+      c.totals.turns       += 1;
+      c.latest.context = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+      if (obj.message.model) c.latest.model = obj.message.model;
+    }
+  }
+  return {
+    input: c.totals.input, output: c.totals.output,
+    cacheRead: c.totals.cacheRead, cacheCreate: c.totals.cacheCreate,
+    turns: c.totals.turns, context: c.latest.context,
+    contextWindow: CONTEXT_WINDOW, model: c.latest.model,
+  };
+}
+
+const usageProviders = { 'claude-code': readClaudeUsage };
+
+// Resolve which provider a session uses: explicit tool.usageProvider wins,
+// else infer from the command (anything running `claude` → claude-code).
+function providerFor(session) {
+  const tool = (config.tools || []).find(t => t.id === session.toolId);
+  if (tool && tool.usageProvider) return tool.usageProvider;
+  if ((session.command || '').toLowerCase().includes('claude')) return 'claude-code';
+  return null;
+}
+
+function collectUsage() {
+  const out = [];
+  for (const [id, s] of sessions) {
+    const name = providerFor(s);
+    const prov = name && usageProviders[name];
+    let usage = null;
+    if (prov) { try { usage = prov(s); } catch {} }
+    out.push({ id, provider: name, usage });
+  }
+  return out;
+}
+
+// ── Rolling 5h usage window (local approximation, like ccusage) ─
+// Anthropic's plan limit (% used / reset time) is server-side and not on disk,
+// so we approximate the 5h session window from transcript timestamps: the block
+// starts at the earliest activity still inside the window and resets 5h later.
+const WINDOW_MS = 5 * 60 * 60 * 1000;
+const windowCache = new Map();  // file -> { ino, size, leftover } (incremental read state)
+let windowEvents = [];          // { ts, tokens } for events seen in/near the window
+
+function ingestTranscript(file) {
+  let st; try { st = fs.statSync(file); } catch { return; }
+  let c = windowCache.get(file);
+  if (!c || c.ino !== st.ino || st.size < c.size) {
+    c = { ino: st.ino, size: 0, leftover: '' };
+    windowCache.set(file, c);
+  }
+  if (st.size <= c.size) return;
+  const len = st.size - c.size;
+  const buf = Buffer.alloc(len);
+  const fd = fs.openSync(file, 'r');
+  try { fs.readSync(fd, buf, 0, len, c.size); } finally { fs.closeSync(fd); }
+  c.size = st.size;
+  const lines = (c.leftover + buf.toString('utf8')).split('\n');
+  c.leftover = lines.pop();
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let obj; try { obj = JSON.parse(line); } catch { continue; }
+    const u = obj.message && obj.message.usage;
+    if (!u || !obj.timestamp) continue;
+    const ts = Date.parse(obj.timestamp);
+    if (!ts) continue;
+    // Cost-weighted token sum — the best local proxy for how the plan meters
+    // usage. Cache reads dominate volume in long sessions, so omitting them made
+    // the % track far below the real one; here they count at their ~0.1x weight.
+    const tokens = (u.input_tokens || 0) * 1
+                 + (u.output_tokens || 0) * 5
+                 + (u.cache_creation_input_tokens || 0) * 1.25
+                 + (u.cache_read_input_tokens || 0) * 0.1;
+    windowEvents.push({ ts, tokens });
+  }
+}
+
+function computeWindow() {
+  const root = path.join(process.env.HOME || process.env.USERPROFILE || '', '.claude', 'projects');
+  const cutoff = Date.now() - WINDOW_MS;
+  let dirs;
+  try { dirs = fs.readdirSync(root); } catch { return { active: false }; }
+  for (const d of dirs) {
+    const dir = path.join(root, d);
+    let files; try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.jsonl')) continue;
+      const fp = path.join(dir, f);
+      let st; try { st = fs.statSync(fp); } catch { continue; }
+      if (st.mtimeMs >= cutoff) ingestTranscript(fp); // only files touched in the window
+    }
+  }
+  windowEvents = windowEvents.filter(e => e.ts >= cutoff);
+  if (!windowEvents.length) return { active: false };
+  let used = 0, start = Infinity;
+  for (const e of windowEvents) { used += e.tokens; if (e.ts < start) start = e.ts; }
+  return { active: true, resetAt: start + WINDOW_MS, used, windowMs: WINDOW_MS };
+}
+
+// Cache the window so the per-poll dir scan only runs every ~12s
+let windowResult = { active: false }, windowComputedAt = 0;
+function getWindow(force) {
+  if (force || Date.now() - windowComputedAt > 12000) {
+    try { windowResult = computeWindow(); } catch { windowResult = { active: false }; }
+    windowComputedAt = Date.now();
+  }
+  return windowResult;
+}
+
 // Boot pre-configured sessions (only if configured)
 if (isConfigured()) {
   for (const cfg of (config.sessions || [])) {
@@ -256,6 +420,9 @@ wss.on('connection', (ws) => {
 
     } else if (type === 'list-backgrounds') {
       ws.send(JSON.stringify({ type: 'backgrounds', files: listBackgrounds() }));
+
+    } else if (type === 'usage') {
+      ws.send(JSON.stringify({ type: 'usage', sessions: collectUsage(), window: getWindow(msg.force) }));
 
     } else if (type === 'close') {
       closeSession(sessionId);
