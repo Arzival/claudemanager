@@ -93,6 +93,16 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   text-shadow:0 0 7px rgba(57,255,20,.4);letter-spacing:.3px}
 #sb-win-reset.sb-empty{color:rgba(160,180,200,.35);font-weight:normal;text-shadow:none}
 .sb-reset-ico{color:var(--green)}
+/* weekly window (amber, secondary) */
+#sb-wk-wrap{width:120px;height:12px;background:rgba(255,214,10,.06);border:1px solid rgba(255,214,10,.25);
+  border-radius:6px;overflow:hidden;flex-shrink:0}
+#sb-wk-bar{height:100%;width:0;background:linear-gradient(90deg,var(--yellow),#ff9500);
+  box-shadow:0 0 8px rgba(255,214,10,.4);transition:width .5s}
+#sb-wk-bar.win-warm{background:linear-gradient(90deg,#ff9500,var(--pink))}
+#sb-wk-bar.win-hot{background:linear-gradient(90deg,var(--pink),#ff4040);box-shadow:0 0 8px rgba(255,0,110,.5)}
+#sb-wk-pct{color:var(--yellow);font-weight:bold;font-size:12px;flex-shrink:0;text-shadow:0 0 6px rgba(255,214,10,.3);min-width:36px}
+#sb-wk-reset{color:rgba(255,214,10,.7);font-size:10px;flex-shrink:0}
+#sb-wk-reset.sb-empty{color:rgba(160,180,200,.3)}
 /* active conversation context (secondary) */
 #sb-session{color:rgba(0,245,255,.75);font-weight:bold;letter-spacing:.5px;flex-shrink:0;
   max-width:220px;overflow:hidden;text-overflow:ellipsis}
@@ -274,10 +284,15 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
 </div>
 <div id="grid-wrap"><div id="canvas"></div></div>
 <div id="status-bar">
-  <span class="sb-label">Sesión 5h</span>
-  <div id="sb-win-wrap" title="Consumo global de la ventana de 5h (aprox, todas tus sesiones). Clic para ajustar tu presupuesto estimado."><div id="sb-win-bar"></div></div>
+  <span class="sb-label">Sesión</span>
+  <div id="sb-win-wrap" title="Consumo global de tu sesión de 5h (todas tus consolas, todos los modelos)"><div id="sb-win-bar"></div></div>
   <span id="sb-win-pct">—</span>
-  <span id="sb-win-reset" class="sb-empty">sin actividad reciente</span>
+  <span id="sb-win-reset" class="sb-empty">—</span>
+  <span class="sb-sep" id="sb-wk-sep"></span>
+  <span class="sb-label" id="sb-wk-label">Semanal</span>
+  <div id="sb-wk-wrap"><div id="sb-wk-bar"></div></div>
+  <span id="sb-wk-pct">—</span>
+  <span id="sb-wk-reset" class="sb-empty"></span>
   <span class="sb-sep"></span>
   <span id="sb-session" class="sb-empty">— sesión activa —</span>
   <span id="sb-ctx-txt"></span>
@@ -1169,14 +1184,22 @@ const sbWinWrap  = document.getElementById('sb-win-wrap');
 const sbWinBar   = document.getElementById('sb-win-bar');
 const sbWinPct   = document.getElementById('sb-win-pct');
 const sbWinReset = document.getElementById('sb-win-reset');
+const sbWkSep    = document.getElementById('sb-wk-sep');
+const sbWkLabel  = document.getElementById('sb-wk-label');
+const sbWkWrap   = document.getElementById('sb-wk-wrap');
+const sbWkBar    = document.getElementById('sb-wk-bar');
+const sbWkPct    = document.getElementById('sb-wk-pct');
+const sbWkReset  = document.getElementById('sb-wk-reset');
 const sbSession  = document.getElementById('sb-session');
 const sbCtxTxt   = document.getElementById('sb-ctx-txt');
 const sbTotal    = document.getElementById('sb-total');
 const sbUpdated  = document.getElementById('sb-updated');
 const sbRefresh  = document.getElementById('sb-refresh');
 
-let windowInfo = null; // { active, resetAt, used, windowMs } — global 5h window
+let official = null;   // { session:{percent,resetAt}, weekly:{percent,resetAt} } — exact, real
+let windowInfo = null; // local 5h window approximation (fallback if token unreadable)
 let lastUsageAt = 0;   // when the last usage payload arrived (for "actualizado hace…")
+let resetRefetchPending = false; // guard: fetch once the moment the session resets
 const BUDGET_KEY = 'cm-usage-budget';
 const DEFAULT_BUDGET = 9400000; // calibrated (cost-weighted) so the bar ≈ claude.ai's %
 function getBudget() { return parseInt(localStorage.getItem(BUDGET_KEY) || '', 10) || DEFAULT_BUDGET; }
@@ -1190,9 +1213,18 @@ function fmtTokens(n) {
 function fmtDur(ms) {
   if (ms <= 0) return 'ahora';
   const total = Math.floor(ms / 1000);
-  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  const d = Math.floor(total / 86400), h = Math.floor((total % 86400) / 3600),
+        m = Math.floor((total % 3600) / 60), s = total % 60;
+  if (d > 0) return `${d}d ${h}h`;
   // Show seconds when under an hour so the countdown visibly ticks
   return h > 0 ? `${h}h ${m}m` : `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
+// Effective session view: the real number when available, else the local estimate
+function sessionView() {
+  if (official && official.session) return { pct: official.session.percent, resetAt: official.session.resetAt, real: true };
+  if (windowInfo && windowInfo.active) return { pct: Math.min(100, Math.round(windowInfo.used / getBudget() * 100)), resetAt: windowInfo.resetAt, real: false };
+  return null;
 }
 function panelName(id) {
   const el = document.querySelector(`.panel[data-id="${id}"] .ph-name`);
@@ -1204,39 +1236,67 @@ function setActiveSession(id) {
   renderStatusBar();
 }
 
-// Live reset countdown — ticks every second from the stored resetAt
-function renderWindowReset() {
-  if (!windowInfo || !windowInfo.active) {
+// Live countdowns — tick every second from the stored resetAt values
+function renderCountdowns() {
+  const s = sessionView();
+  if (s && s.resetAt) {
+    sbWinReset.className = '';
+    sbWinReset.innerHTML = `<span class="sb-reset-ico">⟳</span> se restablece en ${fmtDur(s.resetAt - Date.now())}`;
+  } else {
     sbWinReset.className = 'sb-empty';
-    sbWinReset.textContent = 'sin actividad reciente';
-    return;
+    sbWinReset.textContent = 'sin actividad';
   }
-  sbWinReset.className = '';
-  const rem = windowInfo.resetAt - Date.now();
-  sbWinReset.innerHTML = `<span class="sb-reset-ico">⟳</span> se restablece en ${fmtDur(rem)} · ${fmtTokens(windowInfo.used)} tok`;
+  const w = official && official.weekly;
+  if (w && w.resetAt) {
+    sbWkReset.className = '';
+    sbWkReset.textContent = `⟳ ${fmtDur(w.resetAt - Date.now())}`;
+  } else {
+    sbWkReset.className = 'sb-empty';
+    sbWkReset.textContent = '';
+  }
 }
 
-// Per-second tick: smooth reset countdown + "actualizado hace Xs"
+// Per-second tick: smooth countdowns + "actualizado hace Xs"
 function tickStatusBar() {
-  renderWindowReset();
+  renderCountdowns();
+  // The moment the session resets, fetch immediately so the fresh window shows
+  // up instead of getting stuck on "ahora" until the next poll.
+  const s = sessionView();
+  if (s && s.resetAt && !resetRefetchPending && s.resetAt - Date.now() <= 0) {
+    resetRefetchPending = true;
+    requestUsage(true);
+  }
   if (!lastUsageAt) { sbUpdated.textContent = ''; return; }
-  const s = Math.floor((Date.now() - lastUsageAt) / 1000);
-  sbUpdated.textContent = s < 60 ? `hace ${s}s` : `hace ${Math.floor(s / 60)}m`;
+  const ago = Math.floor((Date.now() - lastUsageAt) / 1000);
+  sbUpdated.textContent = ago < 60 ? `hace ${ago}s` : `hace ${Math.floor(ago / 60)}m`;
 }
 setInterval(tickStatusBar, 1000);
 
 function renderStatusBar() {
-  // ── Global 5h window (hero) ──
-  if (windowInfo && windowInfo.active) {
-    const pct = Math.min(100, Math.round(windowInfo.used / getBudget() * 100));
-    sbWinBar.style.width = pct + '%';
-    sbWinBar.className = pct > 85 ? 'win-hot' : pct > 60 ? 'win-warm' : '';
-    sbWinPct.textContent = `~${pct}%`;
+  // ── Session (hero) — exact when the token is readable, else local estimate ──
+  const s = sessionView();
+  if (s) {
+    sbWinBar.style.width = Math.min(100, s.pct) + '%';
+    sbWinBar.className = s.pct > 85 ? 'win-hot' : s.pct > 60 ? 'win-warm' : '';
+    sbWinPct.textContent = (s.real ? '' : '~') + s.pct + '%';
   } else {
     sbWinBar.style.width = '0%';
     sbWinPct.textContent = '—';
   }
-  renderWindowReset();
+
+  // ── Weekly — exact, only shown when official data is available ──
+  const w = official && official.weekly;
+  const wkEls = [sbWkSep, sbWkLabel, sbWkWrap, sbWkPct, sbWkReset];
+  if (w) {
+    wkEls.forEach(el => el && (el.style.display = ''));
+    sbWkBar.style.width = Math.min(100, w.percent) + '%';
+    sbWkBar.className = w.percent > 85 ? 'win-hot' : w.percent > 60 ? 'win-warm' : '';
+    sbWkPct.textContent = w.percent + '%';
+  } else {
+    wkEls.forEach(el => el && (el.style.display = 'none'));
+  }
+
+  renderCountdowns();
 
   // ── Active conversation context (secondary) ──
   const u = activeSessionId ? usageData[activeSessionId] : null;
@@ -1424,8 +1484,10 @@ ws.addEventListener('message', ev => {
   } else if (msg.type === 'usage') {
     usageData = {};
     msg.sessions.forEach(s => { usageData[s.id] = s.usage; });
+    official = msg.official || null;
     windowInfo = msg.window || null;
     lastUsageAt = Date.now();
+    resetRefetchPending = false;
     // Default the bar to the first session that actually reports usage
     if (!activeSessionId || !document.querySelector(`.panel[data-id="${activeSessionId}"]`)) {
       const first = msg.sessions.find(s => s.usage);

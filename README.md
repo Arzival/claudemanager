@@ -121,19 +121,22 @@ Los tokens solo se consumen cuando la IA procesa texto y genera una respuesta. E
 
 ## Barra de consumo (parte inferior)
 
-Una barra fija en el borde inferior de la página —siempre visible, fuera del scroll del tablero— muestra tu consumo **global** de la **ventana de uso de 5 horas**, agregando todas tus sesiones de todos los proyectos:
+Una barra fija en el borde inferior de la página —siempre visible, fuera del scroll del tablero— muestra el **consumo real de tu cuenta**, pensado para monitorear tu uso y no pasarte de los límites. Es **global**: agrega todas tus consolas abiertas y todos los modelos, no es por panel.
 
-- **% usado** — porcentaje aproximado de tu ventana de 5h. Se calcula con una suma de tokens **ponderada por costo** (entrada, salida, escritura y lectura de caché) sobre un presupuesto estimado.
-- **⟳ se restablece en …** — cuenta regresiva en vivo hasta que la ventana se reinicia (baja segundo a segundo).
-- **Sesión activa** — el panel en el que trabajas y qué tan llena está su ventana de contexto.
-- **Σ sesiones** — total de tokens de entrada/salida acumulados.
-- **hace Xs** + botón **⟳** — cuándo fue la última lectura y un botón para refrescar al instante.
+Muestra dos límites, leídos directamente de tu cuenta:
 
-El consumo se actualiza **automáticamente cada 60 segundos** (o al instante con **⟳**). La cuenta regresiva se anima cada segundo en local.
+- **Sesión** (cyan) — porcentaje usado de tu ventana de 5 horas, con **⟳ se restablece en …** (cuenta regresiva en vivo, baja segundo a segundo).
+- **Semanal** (ámbar) — porcentaje usado del límite semanal, con su propio contador de reinicio.
 
-> El % es una **aproximación local** calculada desde los registros en disco de cada herramienta; el límite real lo lleva el proveedor en sus servidores, así que puede variar un poco. **Haz clic en la barra** para ajustar el presupuesto estimado hasta que el % cuadre con el panel oficial de tu proveedor.
->
-> El lector de consumo es **pluggable por herramienta**: cada CLI define de dónde se leen sus tokens, así que se puede extender a otras herramientas que persistan su uso en disco.
+A la derecha, de forma secundaria: el contexto de la **sesión activa** (el panel enfocado), el total de tokens de la sesión, **hace Xs** (cuándo fue la última lectura) y un botón **⟳** para refrescar al instante.
+
+El consumo se **actualiza automáticamente cada 60 segundos** (o al instante con **⟳**), y los contadores de reinicio se animan cada segundo. Al llegar a cero, la barra vuelve a leer sola para mostrar la ventana nueva.
+
+### De dónde sale el dato
+
+El porcentaje real se obtiene de tu cuenta usando las **credenciales locales** que la herramienta CLI ya guarda en tu equipo; el servidor las relee en cada consulta, nunca las almacena ni las registra. Si por algún motivo no puede leerlas (sin conexión o credenciales no disponibles), la barra cae a una **estimación local** calculada desde los registros de uso en disco (marcada con `~`), de modo que nunca se queda sin información.
+
+> El lector de consumo está pensado para ser **extensible por herramienta**: cada CLI define de dónde se lee su uso, así que puede ampliarse a otras herramientas que expongan su consumo.
 
 ## Puntos de estado
 

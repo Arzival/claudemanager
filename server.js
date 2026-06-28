@@ -1,4 +1,5 @@
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
@@ -266,8 +267,9 @@ function collectUsage() {
 // so we approximate the 5h session window from transcript timestamps: the block
 // starts at the earliest activity still inside the window and resets 5h later.
 const WINDOW_MS = 5 * 60 * 60 * 1000;
+const RETENTION_MS = 18 * 60 * 60 * 1000; // keep enough history to anchor blocks across idle gaps
 const windowCache = new Map();  // file -> { ino, size, leftover } (incremental read state)
-let windowEvents = [];          // { ts, tokens } for events seen in/near the window
+let windowEvents = [];          // { ts, tokens } for events kept within RETENTION_MS
 
 function ingestTranscript(file) {
   let st; try { st = fs.statSync(file); } catch { return; }
@@ -304,7 +306,7 @@ function ingestTranscript(file) {
 
 function computeWindow() {
   const root = path.join(process.env.HOME || process.env.USERPROFILE || '', '.claude', 'projects');
-  const cutoff = Date.now() - WINDOW_MS;
+  const cutoff = Date.now() - RETENTION_MS;
   let dirs;
   try { dirs = fs.readdirSync(root); } catch { return { active: false }; }
   for (const d of dirs) {
@@ -314,14 +316,27 @@ function computeWindow() {
       if (!f.endsWith('.jsonl')) continue;
       const fp = path.join(dir, f);
       let st; try { st = fs.statSync(fp); } catch { continue; }
-      if (st.mtimeMs >= cutoff) ingestTranscript(fp); // only files touched in the window
+      if (st.mtimeMs >= cutoff) ingestTranscript(fp); // files touched within retention
     }
   }
   windowEvents = windowEvents.filter(e => e.ts >= cutoff);
   if (!windowEvents.length) return { active: false };
-  let used = 0, start = Infinity;
-  for (const e of windowEvents) { used += e.tokens; if (e.ts < start) start = e.ts; }
-  return { active: true, resetAt: start + WINDOW_MS, used, windowMs: WINDOW_MS };
+
+  // Reconstruct fixed 5h session blocks (like ccusage): a block is anchored to its
+  // first event and lasts exactly 5h; the meter resets to 0 at start+5h. A new block
+  // starts on the first event past that cap, or after an idle gap longer than 5h.
+  const ev = windowEvents.slice().sort((a, b) => a.ts - b.ts);
+  let blockStart = ev[0].ts, blockTokens = 0, lastTs = ev[0].ts;
+  for (const e of ev) {
+    if (e.ts - blockStart >= WINDOW_MS || e.ts - lastTs >= WINDOW_MS) {
+      blockStart = e.ts; blockTokens = 0; // start a fresh block
+    }
+    blockTokens += e.tokens;
+    lastTs = e.ts;
+  }
+  const resetAt = blockStart + WINDOW_MS;
+  if (Date.now() >= resetAt) return { active: false }; // current block already expired
+  return { active: true, resetAt, used: blockTokens, windowMs: WINDOW_MS };
 }
 
 // Cache the window so the per-poll dir scan only runs every ~12s
@@ -332,6 +347,57 @@ function getWindow(force) {
     windowComputedAt = Date.now();
   }
   return windowResult;
+}
+
+// ── Official account usage (exact, server-side via OAuth) ──────
+// Calls Anthropic's /api/oauth/usage with the token Claude Code keeps in the
+// Keychain. We re-read the token each call so Claude Code owns the refresh; we
+// never log it. This returns the real global 5h-session and weekly % shown in
+// the official app, aggregated across every Claude Code session and model.
+function readOAuthToken() {
+  try {
+    const raw = execSync('security find-generic-password -s "Claude Code-credentials" -w', { encoding: 'utf8' });
+    const j = JSON.parse(raw);
+    return (j.claudeAiOauth || j).accessToken || null;
+  } catch { return null; }
+}
+
+function fetchOfficialUsage(cb) {
+  const tok = readOAuthToken();
+  if (!tok) { cb(null); return; }
+  const req = https.request({
+    hostname: 'api.anthropic.com', path: '/api/oauth/usage', method: 'GET', timeout: 8000,
+    headers: {
+      'Authorization': 'Bearer ' + tok,
+      'anthropic-beta': 'oauth-2025-04-20',
+      'anthropic-version': '2023-06-01',
+      'User-Agent': 'claude-cli/2.1.181',
+    },
+  }, res => {
+    let b = ''; res.on('data', d => b += d); res.on('end', () => {
+      if (res.statusCode !== 200) { cb(null); return; }
+      try {
+        const j = JSON.parse(b);
+        const pick = w => w ? { percent: w.utilization, resetAt: Date.parse(w.resets_at) } : null;
+        cb({ session: pick(j.five_hour), weekly: pick(j.seven_day), at: Date.now() });
+      } catch { cb(null); }
+    });
+  });
+  req.on('error', () => cb(null));
+  req.on('timeout', () => { req.destroy(); cb(null); });
+  req.end();
+}
+
+let officialUsage = null, officialFetchedAt = 0, officialInFlight = false;
+function getOfficialUsage(force, cb) {
+  if (!force && officialUsage && Date.now() - officialFetchedAt < 30000) return cb(officialUsage);
+  if (officialInFlight) return cb(officialUsage); // serve stale while a fetch runs
+  officialInFlight = true;
+  fetchOfficialUsage(u => {
+    officialInFlight = false;
+    if (u) { officialUsage = u; officialFetchedAt = Date.now(); }
+    cb(officialUsage);
+  });
 }
 
 // Boot pre-configured sessions (only if configured)
@@ -422,7 +488,14 @@ wss.on('connection', (ws) => {
       ws.send(JSON.stringify({ type: 'backgrounds', files: listBackgrounds() }));
 
     } else if (type === 'usage') {
-      ws.send(JSON.stringify({ type: 'usage', sessions: collectUsage(), window: getWindow(msg.force) }));
+      getOfficialUsage(msg.force, official => {
+        if (ws.readyState !== 1) return;
+        ws.send(JSON.stringify({
+          type: 'usage', sessions: collectUsage(),
+          window: getWindow(msg.force), // local fallback if the token can't be read
+          official,                     // exact { session, weekly } or null
+        }));
+      });
 
     } else if (type === 'close') {
       closeSession(sessionId);
