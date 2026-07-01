@@ -135,8 +135,14 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   border-bottom:1px solid rgba(0,245,255,.15);position:relative;z-index:1;cursor:grab}
 .ph:active{cursor:grabbing}
 .ph-id{color:rgba(0,245,255,.35);font-size:9px;letter-spacing:2px;flex-shrink:0}
-.ph-name{color:var(--cyan);font-size:12px;font-weight:bold;letter-spacing:1px;flex:1;
+.ph-name{color:var(--cyan);font-size:12px;font-weight:bold;letter-spacing:1px;flex-shrink:0;
   text-shadow:0 0 6px rgba(0,245,255,.4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ph-sep{color:rgba(0,245,255,.2);font-size:10px;flex-shrink:0;user-select:none}
+.ph-sub{color:rgba(255,214,10,.75);font-size:10px;letter-spacing:.5px;flex:1;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;outline:none;cursor:text;min-width:30px}
+.ph-sub:empty::before{content:'+ nota';color:rgba(255,255,255,.15);font-size:9px;cursor:text}
+.ph-sub[contenteditable="true"]{color:var(--yellow);background:rgba(255,214,10,.06);
+  border-bottom:1px solid rgba(255,214,10,.4);cursor:text;white-space:pre;text-shadow:0 0 8px rgba(255,214,10,.4)}
 .ph-cwd{color:rgba(160,180,200,.3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
 
 @keyframes gg{0%,100%{box-shadow:0 0 3px var(--green)}50%{box-shadow:0 0 10px var(--green),0 0 20px rgba(57,255,20,.3)}}
@@ -884,6 +890,8 @@ function buildPanel(s, lay) {
       <span class="ph-id">SYS:${String(panelCount).padStart(2,'0')}</span>
       <div class="dot ${s.status}"></div>
       <span class="ph-name">${s.name.toUpperCase()}</span>
+      <span class="ph-sep">·</span>
+      <span class="ph-sub">${s.subtitle ? escHtml(s.subtitle) : ''}</span>
       <span class="ph-cwd" title="${s.cwd}">${s.cwd}</span>
       <button class="pbtn closebtn" title="Cerrar">✕</button>
     </div>
@@ -913,6 +921,31 @@ function buildPanel(s, lay) {
 
   panel.querySelector('.closebtn').addEventListener('click', () =>
     ws.send(JSON.stringify({ type:'close', sessionId:s.id })));
+
+  // Subtitle — double-click to edit, Enter/Escape/blur to save
+  const subEl = panel.querySelector('.ph-sub');
+  let subOriginal = s.subtitle || '';
+  subEl.addEventListener('dblclick', e => {
+    e.stopPropagation();
+    subEl.contentEditable = 'true';
+    subEl.focus();
+    const range = document.createRange();
+    range.selectNodeContents(subEl);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  });
+  subEl.addEventListener('mousedown', e => {
+    if (subEl.contentEditable === 'true') e.stopPropagation();
+  });
+  subEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); subEl.blur(); }
+    if (e.key === 'Escape') { subEl.textContent = subOriginal; subEl.blur(); }
+  });
+  subEl.addEventListener('blur', () => {
+    subEl.contentEditable = 'false';
+    const subtitle = subEl.textContent.trim();
+    subOriginal = subtitle;
+    ws.send(JSON.stringify({ type:'save-subtitle', sessionId:s.id, subtitle }));
+  });
 
   // Terminal
   const term = new Terminal({
@@ -1203,6 +1236,8 @@ let resetRefetchPending = false; // guard: fetch once the moment the session res
 const BUDGET_KEY = 'cm-usage-budget';
 const DEFAULT_BUDGET = 9400000; // calibrated (cost-weighted) so the bar ≈ claude.ai's %
 function getBudget() { return parseInt(localStorage.getItem(BUDGET_KEY) || '', 10) || DEFAULT_BUDGET; }
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function fmtTokens(n) {
   if (!n) return '0';

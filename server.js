@@ -459,7 +459,7 @@ wss.on('connection', (ws) => {
     if (type === 'list') {
       const list = [];
       for (const [id, s] of sessions)
-        list.push({ id, name: s.name, cwd: s.cwd, status: s.status, cols: s.cols || 80, rows: s.rows || 24 });
+        list.push({ id, name: s.name, cwd: s.cwd, status: s.status, cols: s.cols || 80, rows: s.rows || 24, subtitle: s.subtitle || '' });
       ws.send(JSON.stringify({ type: 'sessions', sessions: list }));
       for (const [id, buf] of buffers)
         if (buf.length) ws.send(JSON.stringify({ type: 'output', sessionId: id, data: buf.join('') }));
@@ -573,6 +573,12 @@ wss.on('connection', (ws) => {
           }
         }, 5000);
       }
+
+    } else if (type === 'save-subtitle') {
+      const s = sessions.get(sessionId);
+      if (s) s.subtitle = msg.subtitle;
+      const saved = (config.sessions || []).find(c => c.id === sessionId);
+      if (saved) { saved.subtitle = msg.subtitle; saveConfig(); }
     }
   });
 
