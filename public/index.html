@@ -138,7 +138,8 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
 .ph-name{color:var(--cyan);font-size:12px;font-weight:bold;letter-spacing:1px;flex-shrink:0;
   text-shadow:0 0 6px rgba(0,245,255,.4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ph-sep{color:rgba(0,245,255,.2);font-size:10px;flex-shrink:0;user-select:none}
-.ph-sub{color:rgba(255,214,10,.75);font-size:10px;letter-spacing:.5px;flex:1;
+.ph-sub{color:var(--yellow);font-size:12px;font-weight:bold;letter-spacing:1px;flex:1;
+  text-shadow:0 0 6px rgba(255,214,10,.45);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;outline:none;cursor:text;min-width:30px}
 .ph-sub:empty::before{content:'+ nota';color:rgba(255,255,255,.15);font-size:9px;cursor:text}
 .ph-sub[contenteditable="true"]{color:var(--yellow);background:rgba(255,214,10,.06);
@@ -154,6 +155,41 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
 .pbtn{background:transparent;border:1px solid rgba(0,245,255,.22);color:rgba(0,245,255,.45);
   font-size:10px;padding:2px 5px;cursor:pointer;font-family:inherit;transition:all .2s;flex-shrink:0;line-height:1}
 .pbtn:hover{border-color:rgba(0,245,255,.6);color:var(--cyan)}
+/* Git badge — branch + pending changes, click to open the drawer */
+.ph-git{background:transparent;border:1px solid rgba(57,255,20,.3);color:rgba(57,255,20,.75);
+  font-family:inherit;font-size:9px;padding:2px 7px;cursor:pointer;flex-shrink:0;
+  white-space:nowrap;letter-spacing:.5px;line-height:1;transition:all .15s}
+.ph-git:hover{border-color:var(--green);color:var(--green);box-shadow:0 0 8px rgba(57,255,20,.25)}
+.ph-git.dirty{border-color:rgba(255,214,10,.4);color:var(--yellow)}
+.ph-git.dirty:hover{border-color:var(--yellow);box-shadow:0 0 8px rgba(255,214,10,.3)}
+
+/* GIT DRAWER — right-side panel with pending changes + diffs */
+#git-drawer{position:fixed;top:74px;right:0;bottom:34px;width:460px;max-width:92vw;z-index:450;
+  display:none;flex-direction:column;background:#07071a;border-left:1px solid var(--border);
+  box-shadow:-8px 0 30px rgba(0,0,0,.65)}
+#git-drawer.open{display:flex}
+.gd-hdr{display:flex;align-items:center;gap:10px;padding:10px 14px;flex-shrink:0;
+  border-bottom:1px solid rgba(0,245,255,.2);background:rgba(0,245,255,.04)}
+#gd-branch{color:var(--cyan);font-weight:bold;font-size:12px;text-shadow:0 0 6px rgba(0,245,255,.35);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px}
+#gd-name{color:#c0d4e8;font-size:10px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#gd-count{color:var(--yellow);font-size:10px;flex-shrink:0;white-space:nowrap}
+#gd-close{background:none;border:1px solid rgba(255,0,110,.4);color:var(--pink);
+  font-size:12px;cursor:pointer;padding:3px 8px;flex-shrink:0}
+#gd-close:hover{background:rgba(255,0,110,.15)}
+#gd-files{list-style:none;overflow-y:auto;max-height:40%;flex-shrink:0;
+  border-bottom:1px solid rgba(0,245,255,.12)}
+#gd-files li{display:flex;gap:9px;padding:5px 14px;font-size:11px;cursor:pointer;
+  color:#a8c0d8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#gd-files li:hover{background:rgba(0,245,255,.06);color:#fff}
+#gd-files li.active{background:rgba(0,245,255,.1);color:#fff}
+.gd-st{width:20px;font-weight:bold;flex-shrink:0}
+.gd-st.M{color:var(--yellow)} .gd-st.A,.gd-st.U{color:var(--green)}
+.gd-st.D{color:var(--pink)} .gd-st.R{color:var(--cyan)}
+#gd-diff{flex:1;overflow:auto;margin:0;padding:10px 14px;font-size:11px;line-height:1.5;
+  white-space:pre;color:#8aa0b4;font-family:'Courier New',monospace}
+.dl-a{color:#39ff14}.dl-d{color:#ff4070}.dl-h{color:var(--cyan)}.dl-m{color:rgba(160,180,200,.45)}
+.gd-empty{padding:16px;color:rgba(160,180,200,.45);font-size:11px;line-height:1.6}
 
 /* Terminal */
 .tw{flex:1;padding:4px;min-height:0;min-width:0;overflow:hidden}
@@ -306,6 +342,18 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   <span id="sb-total"></span>
   <span id="sb-updated"></span>
   <button id="sb-refresh" title="Actualizar consumo ahora">⟳</button>
+</div>
+
+<!-- Git drawer: pending changes + diff for one session -->
+<div id="git-drawer">
+  <div class="gd-hdr">
+    <span id="gd-branch"></span>
+    <span id="gd-name"></span>
+    <span id="gd-count"></span>
+    <button id="gd-close" title="Cerrar (Esc)">✕</button>
+  </div>
+  <ul id="gd-files"></ul>
+  <pre id="gd-diff"></pre>
 </div>
 
 <!-- Project picker -->
@@ -916,6 +964,7 @@ function buildPanel(s, lay) {
       <span class="ph-sep">·</span>
       <span class="ph-sub">${s.subtitle ? escHtml(s.subtitle) : ''}</span>
       <span class="ph-cwd" title="${s.cwd}">${s.cwd}</span>
+      <button class="ph-git" style="display:none" title="Rama y cambios pendientes"></button>
       <button class="pbtn closebtn" title="Cerrar">✕</button>
     </div>
     <div class="tw" id="tw-${s.id}"></div>
@@ -954,6 +1003,11 @@ function buildPanel(s, lay) {
 
   panel.querySelector('.closebtn').addEventListener('click', () =>
     ws.send(JSON.stringify({ type:'close', sessionId:s.id })));
+
+  panel.querySelector('.ph-git').addEventListener('click', e => {
+    e.stopPropagation();
+    openGitDrawer(s.id);
+  });
 
   // Subtitle — double-click to edit, Enter/Escape/blur to save
   const subEl = panel.querySelector('.ph-sub');
@@ -1334,6 +1388,97 @@ document.getElementById('btn-launch').addEventListener('click', () => {
   pickOv.classList.remove('open');
 });
 
+// ── Git: header badges + right-side drawer (branch, changes, diff) ──
+let gitInfo = {};                 // sessionId -> { branch, ahead, behind, files } | null
+let gdSession = null, gdFile = null;
+const gitDrawer = document.getElementById('git-drawer');
+
+function requestGitInfo() {
+  if (ws.readyState === 1) ws.send(JSON.stringify({ type:'git-info' }));
+}
+
+function updateGitBadges() {
+  canvas.querySelectorAll('.panel').forEach(p => {
+    const b = p.querySelector('.ph-git');
+    const info = gitInfo[p.dataset.id];
+    if (!b) return;
+    if (!info || !info.branch) { b.style.display = 'none'; return; }
+    b.style.display = '';
+    b.textContent = `⎇ ${info.branch} ±${info.files.length}`;
+    b.classList.toggle('dirty', info.files.length > 0);
+  });
+  if (gdSession) renderGitDrawer();
+}
+
+function renderGitDrawer() {
+  const info = gitInfo[gdSession];
+  const filesEl = document.getElementById('gd-files');
+  document.getElementById('gd-name').textContent = panelName(gdSession) || '';
+  if (!info || !info.branch) {
+    document.getElementById('gd-branch').textContent = '';
+    document.getElementById('gd-count').textContent = '';
+    filesEl.innerHTML = '<li class="gd-empty">Este directorio no es un repositorio git.</li>';
+    return;
+  }
+  document.getElementById('gd-branch').textContent = '⎇ ' + info.branch;
+  let count = `± ${info.files.length}`;
+  if (info.ahead)  count += `  ↑${info.ahead}`;
+  if (info.behind) count += `  ↓${info.behind}`;
+  document.getElementById('gd-count').textContent = count;
+
+  filesEl.innerHTML = '';
+  if (!info.files.length) {
+    filesEl.innerHTML = '<li class="gd-empty">Sin cambios pendientes — working tree limpio ✓</li>';
+    document.getElementById('gd-diff').textContent = '';
+    gdFile = null;
+    return;
+  }
+  let fileStillThere = false;
+  info.files.forEach(({ s: st, f }) => {
+    const li = document.createElement('li');
+    const cls = st === '??' ? 'U' : st[0];
+    li.innerHTML = `<span class="gd-st ${cls}">${st === '??' ? 'U' : escHtml(st)}</span><span>${escHtml(f)}</span>`;
+    if (f === gdFile) { li.classList.add('active'); fileStillThere = true; }
+    li.addEventListener('click', () => selectGitFile(f, li));
+    filesEl.appendChild(li);
+  });
+  if (gdFile && !fileStillThere) { gdFile = null; document.getElementById('gd-diff').textContent = ''; }
+}
+
+function selectGitFile(f, li) {
+  gdFile = f;
+  document.querySelectorAll('#gd-files li').forEach(l => l.classList.remove('active'));
+  li.classList.add('active');
+  document.getElementById('gd-diff').textContent = 'cargando diff…';
+  ws.send(JSON.stringify({ type:'git-diff', sessionId: gdSession, file: f }));
+}
+
+function renderGitDiff(d) {
+  document.getElementById('gd-diff').innerHTML = d.split('\n').map(l => {
+    const cls =
+      l.startsWith('+++') || l.startsWith('---') || l.startsWith('diff ') || l.startsWith('index ') ? 'dl-m' :
+      l.startsWith('+') ? 'dl-a' :
+      l.startsWith('-') ? 'dl-d' :
+      l.startsWith('@@') ? 'dl-h' : '';
+    return `<span class="${cls}">${escHtml(l) || ' '}</span>`;
+  }).join('\n');
+}
+
+function openGitDrawer(id) {
+  gdSession = id; gdFile = null;
+  document.getElementById('gd-diff').textContent = '';
+  gitDrawer.classList.add('open');
+  renderGitDrawer();
+  requestGitInfo(); // fresh state the moment it opens
+}
+function closeGitDrawer() { gitDrawer.classList.remove('open'); gdSession = null; gdFile = null; }
+
+document.getElementById('gd-close').addEventListener('click', closeGitDrawer);
+document.addEventListener('keydown', e => {
+  // Esc closes the drawer — unless typing inside a terminal (vim & friends use Esc)
+  if (e.key === 'Escape' && gitDrawer.classList.contains('open') && !e.target.closest('.tw')) closeGitDrawer();
+});
+
 // ── Token / session usage status bar ──────────────────────────
 const sbWinWrap  = document.getElementById('sb-win-wrap');
 const sbWinBar   = document.getElementById('sb-win-bar');
@@ -1490,11 +1635,13 @@ function requestUsage(force) {
   if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'usage', force: !!force }));
 }
 
-let usagePoll;
+let usagePoll, gitPoll;
 function startUsagePolling() {
-  clearInterval(usagePoll);
+  clearInterval(usagePoll); clearInterval(gitPoll);
   requestUsage(true);                       // immediate fresh read on (re)connect
   usagePoll = setInterval(() => requestUsage(false), 60000); // auto every 60s
+  requestGitInfo();
+  gitPoll = setInterval(requestGitInfo, 15000); // branch + pending changes badges
 }
 
 // Manual refresh button — forces a fresh server-side recompute
@@ -1546,6 +1693,8 @@ ws.addEventListener('message', ev => {
     }
     applyWorkspaceTheme();
     renderWsBar();
+    updateGitBadges();     // repaint badges on rebuilt panels
+    requestGitInfo();      // and fetch fresh git state
     // After panels are built (with correct layout via getSavedLayout), just show/hide per workspace.
     // Don't re-apply layout or re-fit — buildPanel already did it correctly.
     if (wsStore.active && Object.keys(wsStore.workspaces).length) {
@@ -1578,6 +1727,7 @@ ws.addEventListener('message', ev => {
       wsStore.workspaces[wsStore.active].panelIds.push(msg.session.id);
       persistToWorkspace();
     }
+    requestGitInfo(); // populate the new panel's git badge right away
 
   } else if (msg.type === 'session-removed') {
     const p = document.querySelector(`.panel[data-id="${msg.sessionId}"]`);
@@ -1588,6 +1738,8 @@ ws.addEventListener('message', ev => {
     delete terms[msg.sessionId]; delete fits[msg.sessionId]; delete usageData[msg.sessionId];
     delete lastOut[msg.sessionId]; delete statuses[msg.sessionId]; delete lastResizeTime[msg.sessionId];
     clearTimeout(fitTimers[msg.sessionId]); delete fitTimers[msg.sessionId];
+    delete gitInfo[msg.sessionId];
+    if (gdSession === msg.sessionId) closeGitDrawer();
     if (activeSessionId === msg.sessionId) { activeSessionId = null; renderStatusBar(); }
     // Remove from all workspaces
     Object.values(wsStore.workspaces).forEach(ws => {
@@ -1669,6 +1821,13 @@ ws.addEventListener('message', ev => {
       activeSessionId = first ? first.id : activeSessionId;
     }
     renderStatusBar();
+
+  } else if (msg.type === 'git-info') {
+    gitInfo = msg.data || {};
+    updateGitBadges();
+
+  } else if (msg.type === 'git-diff') {
+    if (msg.sessionId === gdSession && msg.file === gdFile) renderGitDiff(msg.diff || '');
 
   } else if (msg.type === 'backgrounds') {
     backgrounds = msg.files || [];

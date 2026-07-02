@@ -2,7 +2,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, execFile } = require('child_process');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
 
@@ -259,6 +259,26 @@ function readClaudeUsage(session) {
 }
 
 const usageProviders = { 'claude-code': readClaudeUsage };
+
+// ── Git status per session (branch + pending changes, Warp-style) ─
+function gitInfoFor(cwd, cb) {
+  execFile('git', ['status', '--porcelain=v1', '--branch'], { cwd, timeout: 4000 }, (err, out) => {
+    if (err) return cb(null); // not a repo (or git missing) — hide the badge
+    let branch = '', ahead = 0, behind = 0;
+    const files = [];
+    for (const l of out.split('\n')) {
+      if (!l) continue;
+      if (l.startsWith('## ')) {
+        branch = l.slice(3).split('...')[0].trim();
+        const a = l.match(/ahead (\d+)/); if (a) ahead = +a[1];
+        const b = l.match(/behind (\d+)/); if (b) behind = +b[1];
+      } else {
+        files.push({ s: l.slice(0, 2).trim(), f: l.slice(3) });
+      }
+    }
+    cb({ branch, ahead, behind, files });
+  });
+}
 
 // Resolve which provider a session uses: explicit tool.usageProvider wins,
 // else infer from the command (anything running `claude` → claude-code).
@@ -634,6 +654,42 @@ wss.on('connection', (ws) => {
           }
         }, 5000);
       }
+
+    } else if (type === 'git-info') {
+      // Branch + pending-change info for every session, deduped by cwd
+      const cwds = [...new Set([...sessions.values()].map(s => s.cwd))];
+      const byCwd = {};
+      let left = cwds.length;
+      const finish = () => {
+        if (ws.readyState !== 1) return;
+        const data = {};
+        for (const [id, s] of sessions) data[id] = byCwd[s.cwd] || null;
+        ws.send(JSON.stringify({ type: 'git-info', data }));
+      };
+      if (!left) return finish();
+      cwds.forEach(cwd => gitInfoFor(cwd, info => { byCwd[cwd] = info; if (--left === 0) finish(); }));
+
+    } else if (type === 'git-diff') {
+      const s = sessions.get(sessionId);
+      if (!s || typeof msg.file !== 'string') return;
+      // Renames arrive as "old -> new"; diff the new path
+      const file = msg.file.includes(' -> ') ? msg.file.split(' -> ').pop() : msg.file;
+      // Keep the path inside the session's cwd (git-diff --no-index could read anything)
+      const full = path.resolve(s.cwd, file);
+      if (full !== path.resolve(s.cwd) && !full.startsWith(path.resolve(s.cwd) + path.sep)) return;
+      const opts = { cwd: s.cwd, timeout: 5000, maxBuffer: 4 * 1024 * 1024 };
+      const send = d => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'git-diff', sessionId, file: msg.file, diff: d })); };
+      const clip = d => d.length > 200000 ? d.slice(0, 200000) + '\n… (diff truncado)' : d;
+      execFile('git', ['diff', 'HEAD', '--', file], opts, (e1, o1) => {
+        if (o1 && o1.trim()) return send(clip(o1));
+        execFile('git', ['diff', '--', file], opts, (e2, o2) => {
+          if (o2 && o2.trim()) return send(clip(o2));
+          // Untracked file: diff against /dev/null (git exits 1 here by design)
+          execFile('git', ['diff', '--no-index', '--', IS_WIN ? 'NUL' : '/dev/null', file], opts, (e3, o3) => {
+            send(o3 && o3.trim() ? clip(o3) : '(sin cambios que mostrar — ¿archivo binario o vacío?)');
+          });
+        });
+      });
 
     } else if (type === 'save-subtitle') {
       const s = sessions.get(sessionId);
