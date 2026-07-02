@@ -1610,6 +1610,7 @@ const sbUpdated  = document.getElementById('sb-updated');
 const sbRefresh  = document.getElementById('sb-refresh');
 
 let official = null;   // { session:{percent,resetAt}, weekly:{percent,resetAt} } — exact, real
+let officialStatus = null; // { error, backoffUntil, at } — why the exact value may be stale
 let windowInfo = null; // local 5h window approximation (fallback if token unreadable)
 let lastUsageAt = 0;   // when the last usage payload arrived (for "actualizado hace…")
 let resetRefetchFor = 0; // guard: force-fetch only once per expired resetAt value
@@ -1683,7 +1684,20 @@ function tickStatusBar() {
   }
   if (!lastUsageAt) { sbUpdated.textContent = ''; return; }
   const ago = Math.floor((Date.now() - lastUsageAt) / 1000);
-  sbUpdated.textContent = ago < 60 ? `hace ${ago}s` : `hace ${Math.floor(ago / 60)}m`;
+  let txt = ago < 60 ? `hace ${ago}s` : `hace ${Math.floor(ago / 60)}m`;
+  // If the exact % couldn't be fetched, say WHY — otherwise the refresh
+  // button looks broken when the API is rate-limiting or there's no token.
+  if (officialStatus && officialStatus.error) {
+    const e = officialStatus.error;
+    const wait = officialStatus.backoffUntil - Date.now();
+    txt += e === 'http-429' ? ` · ⚠ API limitada${wait > 0 ? ' (' + fmtDur(wait) + ')' : ''}`
+        :  e === 'no-token' ? ' · ⚠ sin token de sesión'
+        :  ' · ⚠ API sin respuesta';
+    sbUpdated.title = official
+      ? 'No se pudo refrescar el % oficial — mostrando el último valor conocido'
+      : 'No se pudo leer el % oficial — mostrando la estimación local (~)';
+  } else sbUpdated.title = '';
+  sbUpdated.textContent = txt;
 }
 setInterval(tickStatusBar, 1000);
 
@@ -1925,6 +1939,7 @@ ws.addEventListener('message', ev => {
     usageData = {};
     msg.sessions.forEach(s => { usageData[s.id] = s.usage; });
     official = msg.official || null;
+    officialStatus = msg.officialStatus || null;
     windowInfo = msg.window || null;
     lastUsageAt = Date.now();
     // Default the bar to the first session that actually reports usage

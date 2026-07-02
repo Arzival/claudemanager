@@ -443,6 +443,7 @@ function fetchOfficialUsage(cb) {
   const tok = readOAuthToken();
   if (!tok) {
     console.log('[usage] OAuth token not found (Keychain / ~/.claude/.credentials.json) — using local estimate');
+    officialLastError = 'no-token';
     cb(null); return;
   }
   const req = https.request({
@@ -458,21 +459,24 @@ function fetchOfficialUsage(cb) {
       if (res.statusCode !== 200) {
         console.log(`[usage] /oauth/usage HTTP ${res.statusCode} — keeping last known value`);
         if (res.statusCode === 429) officialBackoffUntil = Date.now() + 5 * 60 * 1000;
+        officialLastError = 'http-' + res.statusCode;
         cb(null); return;
       }
       try {
         const j = JSON.parse(b);
         const pick = w => w ? { percent: w.utilization, resetAt: Date.parse(w.resets_at) } : null;
+        officialLastError = null;
         cb({ session: pick(j.five_hour), weekly: pick(j.seven_day), at: Date.now() });
-      } catch { cb(null); }
+      } catch { officialLastError = 'parse'; cb(null); }
     });
   });
-  req.on('error', () => cb(null));
-  req.on('timeout', () => { req.destroy(); cb(null); });
+  req.on('error', () => { officialLastError = 'network'; cb(null); });
+  req.on('timeout', () => { req.destroy(); officialLastError = 'timeout'; cb(null); });
   req.end();
 }
 
 let officialUsage = null, officialFetchedAt = 0, officialInFlight = false, officialBackoffUntil = 0;
+let officialLastError = null; // why the last fetch failed — surfaced in the UI
 
 // Persist the last good value so a server restart doesn't drop the bar back
 // to the local estimate while the endpoint is rate-limiting us.
@@ -607,6 +611,7 @@ wss.on('connection', (ws) => {
           type: 'usage', sessions: collectUsage(),
           window: getWindow(msg.force), // local fallback if the token can't be read
           official,                     // exact { session, weekly } or null
+          officialStatus: { error: officialLastError, backoffUntil: officialBackoffUntil, at: officialFetchedAt },
         }));
       });
 
