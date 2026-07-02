@@ -13,7 +13,18 @@ const PORT = 3000;
 const BUFFER_LIMIT = 1000;          // max chunks of replay history per session
 const BUFFER_BYTES = 256 * 1024;    // cap replay history at ~256 KB per session
 const FLUSH_MS = 16; // coalesce PTY output into one broadcast per frame
-const CONFIG_FILE = path.join(__dirname, 'sessions.json');
+
+// State lives OUTSIDE the repo (~/.claudemanager) so updating the project
+// (git clean, zip overwrite, discard changes…) can never wipe the sessions
+// or the cached usage %. Legacy in-repo files are migrated on first boot.
+const DATA_DIR = path.join(require('os').homedir(), '.claudemanager');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const CONFIG_FILE = path.join(DATA_DIR, 'sessions.json');
+const LEGACY_CONFIG = path.join(__dirname, 'sessions.json');
+if (!fs.existsSync(CONFIG_FILE) && fs.existsSync(LEGACY_CONFIG)) {
+  fs.copyFileSync(LEGACY_CONFIG, CONFIG_FILE);
+  console.log(`Migrated sessions.json → ${CONFIG_FILE}`);
+}
 const EXAMPLE_FILE = path.join(__dirname, 'sessions.example.json');
 const BACKGROUNDS_DIR = path.join(__dirname, 'fondos');
 const IS_WIN = process.platform === 'win32';
@@ -465,7 +476,7 @@ let officialUsage = null, officialFetchedAt = 0, officialInFlight = false, offic
 
 // Persist the last good value so a server restart doesn't drop the bar back
 // to the local estimate while the endpoint is rate-limiting us.
-const USAGE_CACHE_FILE = path.join(__dirname, 'logs', '.usage-cache.json');
+const USAGE_CACHE_FILE = path.join(DATA_DIR, 'usage-cache.json');
 try {
   const j = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf8'));
   if (j && j.session && j.session.resetAt > Date.now()) {
