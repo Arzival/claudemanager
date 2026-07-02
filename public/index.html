@@ -157,6 +157,7 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
 
 /* Terminal */
 .tw{flex:1;padding:4px;min-height:0;min-width:0;overflow:hidden}
+.tw.drop-hover{outline:2px dashed var(--cyan);outline-offset:-4px;background:rgba(0,245,255,.05)}
 .xterm{height:100%}
 .xterm-viewport::-webkit-scrollbar{width:3px}
 .xterm-viewport::-webkit-scrollbar-thumb{background:rgba(0,245,255,.3);border-radius:2px}
@@ -593,7 +594,16 @@ function applyTermOpacity(id) {
   const p = document.querySelector(`.panel[data-id="${id}"]`);
   if (p) p.style.background = rgba;
 }
-function applyAllTermOpacity() { Object.keys(terms).forEach(applyTermOpacity); }
+// Re-theming every terminal is expensive; coalesce rapid calls (opacity slider)
+// into one application per animation frame.
+let termOpacityRaf = null;
+function applyAllTermOpacity() {
+  if (termOpacityRaf) return;
+  termOpacityRaf = requestAnimationFrame(() => {
+    termOpacityRaf = null;
+    Object.keys(terms).forEach(applyTermOpacity);
+  });
+}
 function applyWorkspaceBg(bgName) {
   const bg = bgName !== undefined ? bgName : (activeWs() && activeWs().bg);
   gridWrap.style.backgroundImage    = bg ? `url('/fondos/${encodeURIComponent(bg)}')` : '';
@@ -762,7 +772,9 @@ function debouncedFit(id, delay = 80) {
 
 // ── Canvas height: expand to fit all panels ───────────────────
 function updateCanvasHeight() {
-  const panels = [...canvas.querySelectorAll('.panel')];
+  // Only visible panels count — hidden ones belong to other workspaces and
+  // keep stale positions that would inflate the canvas with phantom scroll.
+  const panels = [...canvas.querySelectorAll('.panel')].filter(p => !p.dataset.hidden);
   if (!panels.length) { canvas.style.height = ''; return; }
   const maxBottom = Math.max(...panels.map(p =>
     parseFloat(p.style.top) + parseFloat(p.style.height)));
@@ -799,8 +811,17 @@ function scheduleRefit() {
   Object.keys(fits).forEach(id => debouncedFit(id, 80));
 }
 
-// Raise panel to top
-function raise(panel) { panel.style.zIndex = ++zTop; }
+// Raise panel to top. Renormalize before z-indexes reach the modals' z:500 —
+// otherwise, after enough clicks, panels render ON TOP of every modal.
+function raise(panel) {
+  panel.style.zIndex = ++zTop;
+  if (zTop > 400) {
+    const ps = [...canvas.querySelectorAll('.panel')]
+      .sort((a, b) => (+a.style.zIndex || 0) - (+b.style.zIndex || 0));
+    zTop = 10;
+    ps.forEach(p => p.style.zIndex = ++zTop);
+  }
+}
 
 // ── DRAG MOVE (header) ────────────────────────────────────────
 function initDragMove(panel, header) {
@@ -823,7 +844,8 @@ function initDragMove(panel, header) {
       panel.style.opacity = '1';
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      updateCanvasHeight(); scheduleRefit(); persistToWorkspace();
+      // Moving doesn't change any panel's size — no terminal refit needed
+      updateCanvasHeight(); persistToWorkspace();
     }
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -857,7 +879,8 @@ function initResizeHandle(panel, rh, dirs) {
     function onUp() {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      updateCanvasHeight(); scheduleRefit(); persistToWorkspace();
+      // Only this panel changed size; its own ResizeObserver also fires
+      updateCanvasHeight(); debouncedFit(panel.dataset.id, 0); persistToWorkspace();
     }
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -916,8 +939,18 @@ function buildPanel(s, lay) {
   initResizeHandle(panel, panel.querySelector('.rh-t'), ['t']);
   initResizeHandle(panel, panel.querySelector('.rh-br'), ['r','b']);
 
-  // Raise on click + reflect this session in the status bar
-  panel.addEventListener('mousedown', () => { raise(panel); setActiveSession(s.id); });
+  // Raise on click + reflect this session in the status bar. Also refocus the
+  // terminal: dragging a panel by its header used to leave focus on <body>,
+  // after which Cmd+V (image paste) silently went nowhere.
+  panel.addEventListener('mousedown', e => {
+    raise(panel); setActiveSession(s.id);
+    if (e.target.closest('button') || e.target.closest('.ph-sub')) return;
+    setTimeout(() => {
+      // Don't steal focus if the subtitle entered edit mode in the meantime
+      if (document.activeElement?.isContentEditable) return;
+      try { terms[s.id]?.focus(); } catch {}
+    }, 0);
+  });
 
   panel.querySelector('.closebtn').addEventListener('click', () =>
     ws.send(JSON.stringify({ type:'close', sessionId:s.id })));
@@ -963,7 +996,12 @@ function buildPanel(s, lay) {
   // fall back to the default DOM renderer if WebGL is unavailable or its context is lost.
   try {
     const webgl = new WebglAddon.WebglAddon();
-    webgl.onContextLoss(() => { try { webgl.dispose(); } catch {} });
+    webgl.onContextLoss(() => {
+      try { webgl.dispose(); } catch {}
+      // Without an explicit repaint the terminal stays blank after falling
+      // back to the DOM renderer (this is what "broke" panels after a while).
+      requestAnimationFrame(() => { try { term.refresh(0, term.rows - 1); } catch {} });
+    });
     term.loadAddon(webgl);
   } catch {}
   terms[s.id] = term; fits[s.id] = fit;
@@ -987,6 +1025,17 @@ function buildPanel(s, lay) {
     lastResizeTime[s.id] = Date.now();
   });
   term.attachCustomKeyEventHandler(e => {
+    // Shift+Enter → newline instead of submitting: xterm sends plain \r for
+    // both, so emit ESC+CR (what Option+Enter sends), which Claude Code and
+    // other TUIs interpret as "insert a line break". This must swallow the
+    // keypress event too (checked before the keydown-only gate below) —
+    // otherwise xterm's keypress handler still emits \r and submits anyway.
+    if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (e.type === 'keydown')
+        ws.send(JSON.stringify({ type:'input', sessionId:s.id, data:'\x1b\r' }));
+      e.preventDefault();
+      return false;
+    }
     if (e.type !== 'keydown') return true;
     if (e.ctrlKey && e.key==='k') { term.clear(); return false; }
     if (e.metaKey && e.key==='c' && term.hasSelection()) {
@@ -1010,7 +1059,80 @@ function buildPanel(s, lay) {
     reader.onload = () => ws.send(JSON.stringify({ type:'paste-image', sessionId:s.id, data:reader.result }));
     reader.readAsDataURL(imgItem.getAsFile());
   });
+
+  // Drag & drop de archivos → pega la ruta en la terminal (como una terminal nativa).
+  // El navegador oculta la ruta original, así que el archivo se sube al servidor y se
+  // pega la ruta de la copia temporal. Si el origen sí provee file:// URIs (VS Code,
+  // etc.) se pega la ruta real directamente sin copiar nada.
+  twEl.addEventListener('dragover', e => {
+    e.preventDefault(); e.stopPropagation();
+    twEl.classList.add('drop-hover');
+  });
+  twEl.addEventListener('dragleave', e => {
+    if (!twEl.contains(e.relatedTarget)) twEl.classList.remove('drop-hover');
+  });
+  twEl.addEventListener('drop', e => {
+    e.preventDefault(); e.stopPropagation();
+    twEl.classList.remove('drop-hover');
+    term.focus(); setActiveSession(s.id);
+
+    // 1) Real paths available? (file:// URIs from apps that expose them)
+    const uris = (e.dataTransfer.getData('text/uri-list') || '')
+      .split(/\r?\n/).filter(u => u.startsWith('file://'));
+    if (uris.length) {
+      const paths = uris.map(u => decodeURIComponent(u.replace(/^file:\/\/[^/]*/, '')));
+      term.paste(paths.map(shEscape).join(' '));
+      return;
+    }
+
+    // 2) Dropped files (Finder etc.) → upload, server replies with temp paths
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length) {
+      const MAX = 50 * 1024 * 1024;
+      if (files.reduce((a, f) => a + f.size, 0) > MAX) {
+        alert('Archivos demasiado grandes para soltar (máx. 50MB en total)');
+        return;
+      }
+      Promise.all(files.map(f => new Promise(res => {
+        const r = new FileReader();
+        r.onload = () => res({ name: f.name, data: r.result });
+        r.onerror = () => res(null); // e.g. dropped folders can't be read — skip
+        r.readAsDataURL(f);
+      }))).then(list => {
+        const ok = list.filter(Boolean);
+        if (ok.length) ws.send(JSON.stringify({ type:'drop-files', sessionId:s.id, files: ok }));
+      });
+      return;
+    }
+
+    // 3) Plain text drops (e.g. dragged selection) → paste as-is
+    const txt = e.dataTransfer.getData('text/plain');
+    if (txt) term.paste(txt);
+  });
 }
+
+// Escape shell-special characters the way native terminals do when a file is dropped
+function shEscape(p) { return p.replace(/[^\w\/.\-]/g, c => '\\' + c); }
+
+// Don't let drops outside a terminal navigate the page away from the dashboard
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => e.preventDefault());
+
+// Fallback: pasting an image while no terminal has focus (e.g. right after
+// dragging a panel) used to go nowhere. Route it to the active session.
+document.addEventListener('paste', e => {
+  if (e.target.closest && e.target.closest('.tw')) return;            // per-terminal handler owns it
+  if (e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]')) return;
+  const imgItem = Array.from(e.clipboardData?.items || []).find(it => it.type.startsWith('image/'));
+  if (!imgItem || !activeSessionId || !terms[activeSessionId]) return;
+  const p = document.querySelector(`.panel[data-id="${activeSessionId}"]`);
+  if (!p || p.dataset.hidden) return;                                 // never paste into another workspace
+  e.preventDefault();
+  const reader = new FileReader();
+  reader.onload = () => ws.send(JSON.stringify({ type:'paste-image', sessionId:activeSessionId, data:reader.result }));
+  reader.readAsDataURL(imgItem.getAsFile());
+  terms[activeSessionId].focus();
+});
 
 new ResizeObserver(() => { updateCanvasHeight(); scheduleRefit(); }).observe(gridWrap);
 document.addEventListener('visibilitychange', () => {
@@ -1405,6 +1527,12 @@ ws.addEventListener('message', ev => {
     renderToolPills(); renderToolsList();
 
   } else if (msg.type === 'sessions') {
+    // Dispose any previous terminals before rebuilding so their WebGL
+    // contexts and listeners don't leak.
+    Object.keys(terms).forEach(id => {
+      try { terms[id].dispose(); } catch {}
+      delete terms[id]; delete fits[id];
+    });
     canvas.innerHTML=''; panelCount=0; zTop=10;
     msg.sessions.forEach((s, i) => {
       statuses[s.id]=s.status;
@@ -1454,7 +1582,12 @@ ws.addEventListener('message', ev => {
   } else if (msg.type === 'session-removed') {
     const p = document.querySelector(`.panel[data-id="${msg.sessionId}"]`);
     if (p) { p.remove(); updateCanvasHeight(); }
+    // Dispose the Terminal so its WebGL context is released — leaked contexts
+    // eventually hit the browser's limit and kill the contexts of LIVE panels.
+    try { terms[msg.sessionId]?.dispose(); } catch {}
     delete terms[msg.sessionId]; delete fits[msg.sessionId]; delete usageData[msg.sessionId];
+    delete lastOut[msg.sessionId]; delete statuses[msg.sessionId]; delete lastResizeTime[msg.sessionId];
+    clearTimeout(fitTimers[msg.sessionId]); delete fitTimers[msg.sessionId];
     if (activeSessionId === msg.sessionId) { activeSessionId = null; renderStatusBar(); }
     // Remove from all workspaces
     Object.values(wsStore.workspaces).forEach(ws => {
@@ -1471,7 +1604,10 @@ ws.addEventListener('message', ev => {
       // After a resize the app redraws via SIGWINCH; scroll to bottom when that output arrives
       if (Date.now() - (lastResizeTime[msg.sessionId] || 0) < 1500) t.scrollToBottom();
     }
-    if (statuses[msg.sessionId]!=='exited') setDot(msg.sessionId,'running');
+    // Only touch the DOM when the dot actually changes state — this handler
+    // runs for every output chunk under heavy streaming.
+    if (statuses[msg.sessionId]!=='exited' && statuses[msg.sessionId]!=='running')
+      setDot(msg.sessionId,'running');
 
   } else if (msg.type === 'status') {
     setDot(msg.sessionId, msg.status);
@@ -1515,6 +1651,10 @@ ws.addEventListener('message', ev => {
   } else if (msg.type === 'image-pasted') {
     const t = terms[msg.sessionId];
     if (t) t.paste(msg.path);
+
+  } else if (msg.type === 'files-dropped') {
+    const t = terms[msg.sessionId];
+    if (t) t.paste(msg.paths.join(' ')); // temp paths are sanitized — no escaping needed
 
   } else if (msg.type === 'usage') {
     usageData = {};

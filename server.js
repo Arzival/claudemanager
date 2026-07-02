@@ -46,8 +46,23 @@ function saveConfig() {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
+// Coalesce high-frequency saves (e.g. many resize events during a drag) into
+// one write. `config` is shared, so the deferred write always persists the
+// latest state.
+let saveTimer = null;
+function scheduleSave() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => { saveTimer = null; saveConfig(); }, 400);
+}
+
 // Try to auto-detect claude binary path
-function detectClaude() {
+let claudePathCache;
+function detectClaude(force) {
+  if (!force && claudePathCache !== undefined) return claudePathCache;
+  claudePathCache = detectClaudeUncached();
+  return claudePathCache;
+}
+function detectClaudeUncached() {
   const home = process.env.HOME || process.env.USERPROFILE || '';
   const candidates = IS_WIN
     ? [
@@ -84,12 +99,16 @@ function flushOutput(id) {
   if (!p) return;
   p.timer = null;
   if (!p.chunks.length) return;
+  // With no browser connected, skip the join/stringify entirely — the replay
+  // buffer already holds this output for when a client reconnects.
+  if (!clients.size) { p.chunks.length = 0; return; }
   const data = p.chunks.join('');
   p.chunks.length = 0;
   broadcast({ type: 'output', sessionId: id, data });
 }
 
 function broadcast(msg) {
+  if (!clients.size) return;
   const str = JSON.stringify(msg);
   for (const ws of clients) {
     if (ws.readyState === 1) ws.send(str);
@@ -309,6 +328,7 @@ function computeWindow() {
   const cutoff = Date.now() - RETENTION_MS;
   let dirs;
   try { dirs = fs.readdirSync(root); } catch { return { active: false }; }
+  const seen = new Set();
   for (const d of dirs) {
     const dir = path.join(root, d);
     let files; try { files = fs.readdirSync(dir); } catch { continue; }
@@ -316,9 +336,12 @@ function computeWindow() {
       if (!f.endsWith('.jsonl')) continue;
       const fp = path.join(dir, f);
       let st; try { st = fs.statSync(fp); } catch { continue; }
-      if (st.mtimeMs >= cutoff) ingestTranscript(fp); // files touched within retention
+      if (st.mtimeMs >= cutoff) { seen.add(fp); ingestTranscript(fp); } // files touched within retention
     }
   }
+  // Drop cache state for transcripts that fell out of the retention window so
+  // the map doesn't grow forever across days of sessions.
+  for (const key of windowCache.keys()) if (!seen.has(key)) windowCache.delete(key);
   windowEvents = windowEvents.filter(e => e.ts >= cutoff);
   if (!windowEvents.length) return { active: false };
 
@@ -354,12 +377,19 @@ function getWindow(force) {
 // Keychain. We re-read the token each call so Claude Code owns the refresh; we
 // never log it. This returns the real global 5h-session and weekly % shown in
 // the official app, aggregated across every Claude Code session and model.
+let oauthTokenCache = null, oauthTokenAt = 0;
 function readOAuthToken() {
+  // The Keychain call is a blocking execSync (~tens of ms); cache the token
+  // briefly so the periodic usage poll doesn't stall the event loop each time.
+  // Claude Code still owns the refresh — we just re-read every few minutes.
+  if (oauthTokenCache && Date.now() - oauthTokenAt < 5 * 60 * 1000) return oauthTokenCache;
   try {
     const raw = execSync('security find-generic-password -s "Claude Code-credentials" -w', { encoding: 'utf8' });
     const j = JSON.parse(raw);
-    return (j.claudeAiOauth || j).accessToken || null;
-  } catch { return null; }
+    oauthTokenCache = (j.claudeAiOauth || j).accessToken || null;
+    oauthTokenAt = Date.now();
+    return oauthTokenCache;
+  } catch { return oauthTokenCache; }
 }
 
 function fetchOfficialUsage(cb) {
@@ -409,10 +439,16 @@ if (isConfigured()) {
 }
 
 // HTTP server
+let indexCache = null; // in-memory copy of index.html, invalidated by fs.watch below
 const server = http.createServer((req, res) => {
   if (req.url === '/' || req.url === '/index.html') {
+    if (indexCache) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(indexCache);
+    }
     fs.readFile(path.join(__dirname, 'public', 'index.html'), (err, data) => {
       if (err) { res.writeHead(500); return res.end('Error'); }
+      indexCache = data;
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(data);
     });
@@ -424,10 +460,17 @@ const server = http.createServer((req, res) => {
     if (!full.startsWith(BACKGROUNDS_DIR + path.sep) || !IMG_TYPES[ext]) {
       res.writeHead(404); return res.end('Not found');
     }
-    fs.readFile(full, (err, data) => {
-      if (err) { res.writeHead(404); return res.end('Not found'); }
-      res.writeHead(200, { 'Content-Type': IMG_TYPES[ext], 'Cache-Control': 'no-cache' });
-      res.end(data);
+    // Stream the image and honor conditional requests: with an ETag the
+    // browser revalidates and gets a 304 instead of re-downloading the file.
+    fs.stat(full, (err, st) => {
+      if (err || !st.isFile()) { res.writeHead(404); return res.end('Not found'); }
+      const etag = `"${st.size}-${Math.round(st.mtimeMs)}"`;
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304); return res.end(); }
+      res.writeHead(200, {
+        'Content-Type': IMG_TYPES[ext], 'Content-Length': st.size,
+        'ETag': etag, 'Cache-Control': 'no-cache',
+      });
+      fs.createReadStream(full).pipe(res);
     });
   } else {
     res.writeHead(404); res.end('Not found');
@@ -479,10 +522,10 @@ wss.on('connection', (ws) => {
       if (s && s.proc && s.status === 'running') {
         try { s.proc.resize(msg.cols, msg.rows); } catch {}
         const saved = (config.sessions || []).find(c => c.id === sessionId);
-        if (saved) { saved.cols = msg.cols; saved.rows = msg.rows; saveConfig(); }
+        if (saved) { saved.cols = msg.cols; saved.rows = msg.rows; scheduleSave(); }
       }
     } else if (type === 'detect-claude') {
-      ws.send(JSON.stringify({ type: 'detected-claude', path: detectClaude() }));
+      ws.send(JSON.stringify({ type: 'detected-claude', path: detectClaude(true) }));
 
     } else if (type === 'list-backgrounds') {
       ws.send(JSON.stringify({ type: 'backgrounds', files: listBackgrounds() }));
@@ -536,6 +579,24 @@ wss.on('connection', (ws) => {
         fs.writeFileSync(tmpPath, Buffer.from(m[2], 'base64'));
         ws.send(JSON.stringify({ type:'image-pasted', sessionId:msg.sessionId, path:tmpPath }));
       } catch(err) { console.error('[paste-image]', err.message); }
+
+    } else if (type === 'drop-files') {
+      // Files dragged onto a terminal. The browser can't reveal the original
+      // path, so we persist a temp copy (keeping the filename) and the client
+      // pastes that path — same pattern as paste-image.
+      try {
+        const paths = [];
+        let n = 0;
+        for (const f of (msg.files || []).slice(0, 20)) {
+          const m = (f.data || '').match(/^data:([^;,]*);base64,(.*)$/s);
+          if (!m) continue;
+          const safe = String(f.name || 'archivo').replace(/[^\w.\-]+/g, '_').slice(-80) || 'archivo';
+          const tmpPath = path.join(require('os').tmpdir(), `cm_drop_${Date.now()}_${n++}_${safe}`);
+          fs.writeFileSync(tmpPath, Buffer.from(m[2], 'base64'));
+          paths.push(tmpPath);
+        }
+        if (paths.length) ws.send(JSON.stringify({ type:'files-dropped', sessionId:msg.sessionId, paths }));
+      } catch(err) { console.error('[drop-files]', err.message); }
 
     } else if (type === 'delete-tool') {
       config.tools = (config.tools || []).filter(t => t.id !== msg.toolId);
@@ -592,7 +653,11 @@ server.listen(PORT, () => {
 });
 
 let reloadTimer;
-fs.watch(path.join(__dirname, 'public', 'index.html'), () => {
+// Watch the directory, not the file: editors replace files via rename, which
+// kills a file-level watcher after the first save (stale cache + no reload).
+fs.watch(path.join(__dirname, 'public'), (ev, filename) => {
+  if (filename && filename !== 'index.html') return;
+  indexCache = null;
   clearTimeout(reloadTimer);
   reloadTimer = setTimeout(() => broadcast({ type: 'reload' }), 120);
 });
