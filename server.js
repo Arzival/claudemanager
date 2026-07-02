@@ -403,13 +403,28 @@ function readOAuthToken() {
   // briefly so the periodic usage poll doesn't stall the event loop each time.
   // Claude Code still owns the refresh — we just re-read every few minutes.
   if (oauthTokenCache && Date.now() - oauthTokenAt < 5 * 60 * 1000) return oauthTokenCache;
-  try {
-    const raw = execSync('security find-generic-password -s "Claude Code-credentials" -w', { encoding: 'utf8' });
-    const j = JSON.parse(raw);
-    oauthTokenCache = (j.claudeAiOauth || j).accessToken || null;
-    oauthTokenAt = Date.now();
-    return oauthTokenCache;
-  } catch { return oauthTokenCache; }
+  let raw = null;
+  if (process.platform === 'darwin') {
+    try {
+      raw = execSync('security find-generic-password -s "Claude Code-credentials" -w', { encoding: 'utf8' });
+    } catch {}
+  }
+  if (!raw) {
+    // Windows/Linux (no Keychain): Claude Code stores the credential on disk.
+    // Also acts as a fallback on macOS if the Keychain read fails.
+    try {
+      const home = process.env.HOME || process.env.USERPROFILE || '';
+      raw = fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8');
+    } catch {}
+  }
+  if (raw) {
+    try {
+      const j = JSON.parse(raw);
+      const tok = (j.claudeAiOauth || j).accessToken || null;
+      if (tok) { oauthTokenCache = tok; oauthTokenAt = Date.now(); }
+    } catch {}
+  }
+  return oauthTokenCache;
 }
 
 function fetchOfficialUsage(cb) {
