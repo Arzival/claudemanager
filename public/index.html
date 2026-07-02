@@ -1093,6 +1093,16 @@ function buildPanel(s, lay) {
       return false;
     }
     if (e.type !== 'keydown') return true;
+    // Ctrl+V (Windows/Linux): xterm swallows it and sends ^V to the pty
+    // instead of pasting. Read the clipboard ourselves and paste for real.
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === 'v') {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        e.preventDefault();
+        navigator.clipboard.readText().then(t => { if (t) term.paste(t); }).catch(() => {});
+        return false;
+      }
+      return true; // no clipboard API (insecure origin) — let the browser try
+    }
     if (e.ctrlKey && e.key==='k') { term.clear(); return false; }
     if (e.metaKey && e.key==='c' && term.hasSelection()) {
       navigator.clipboard.writeText(decodeXtermSelection(term.getSelection())).catch(() => {});
