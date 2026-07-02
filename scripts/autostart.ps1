@@ -1,69 +1,71 @@
-# ClaudeManager autostart para Windows (Task Scheduler)
-# Uso: Ejecutar como Administrador
+# ClaudeManager autostart para Windows (registro HKCU - no requiere Administrador)
+# Uso:
 #   .\scripts\autostart.ps1 install
 #   .\scripts\autostart.ps1 uninstall
 #   .\scripts\autostart.ps1 status
 
 param([string]$Action = "install")
 
-$TaskName   = "ClaudeManager"
+$AppName    = "ClaudeManager"
+$RegPath    = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 $ProjectDir = (Resolve-Path "$PSScriptRoot\..").Path
-$NodeBin    = (Get-Command node -ErrorAction SilentlyContinue)?.Source
-$LogDir     = Join-Path $ProjectDir "logs"
+$ServerJs   = Join-Path $ProjectDir "server.js"
+$NodeCmd    = Get-Command node -ErrorAction SilentlyContinue
+$NodeBin    = if ($NodeCmd) { $NodeCmd.Source } else { $null }
 
 if (-not $NodeBin) {
-    Write-Error "Node.js no encontrado en el PATH. Instálalo desde https://nodejs.org"
+    Write-Error "Node.js no encontrado en el PATH. Instalalo desde https://nodejs.org"
     exit 1
 }
 
+# Wrapper VBScript para arrancar Node sin ventana de consola visible
+$VbsPath = Join-Path $ProjectDir "scripts\start-hidden.vbs"
+
 switch ($Action) {
     "install" {
-        if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
+        # Crear el VBScript que lanza node sin ventana visible
+        $vbsContent = @"
+Set oShell = CreateObject("WScript.Shell")
+oShell.Run """$NodeBin"" ""$ServerJs""", 0, False
+"@
+        Set-Content -Path $VbsPath -Value $vbsContent -Encoding ASCII
 
-        $action  = New-ScheduledTaskAction `
-            -Execute $NodeBin `
-            -Argument "server.js" `
-            -WorkingDirectory $ProjectDir
+        # Registrar en HKCU\Run para que arranque con el inicio de sesion
+        $cmd = "wscript.exe `"$VbsPath`""
+        Set-ItemProperty -Path $RegPath -Name $AppName -Value $cmd
 
-        $trigger  = New-ScheduledTaskTrigger -AtLogon
-        $settings = New-ScheduledTaskSettingsSet `
-            -RestartCount 5 `
-            -RestartInterval (New-TimeSpan -Minutes 1) `
-            -ExecutionTimeLimit ([TimeSpan]::Zero)
-
-        Register-ScheduledTask `
-            -TaskName $TaskName `
-            -Action $action `
-            -Trigger $trigger `
-            -Settings $settings `
-            -RunLevel Highest `
-            -Force | Out-Null
-
-        # Arrancar ahora sin esperar al siguiente login
-        Start-ScheduledTask -TaskName $TaskName
+        # Arrancar ahora mismo
+        Start-Process "wscript.exe" -ArgumentList "`"$VbsPath`"" -WindowStyle Hidden
 
         Write-Host ""
-        Write-Host "V ClaudeManager registrado en el Programador de tareas de Windows"
+        Write-Host "OK ClaudeManager registrado para iniciar con Windows"
         Write-Host "  Proyecto : $ProjectDir"
         Write-Host "  Node     : $NodeBin"
-        Write-Host "  Logs     : $LogDir"
         Write-Host ""
         Write-Host "  El servidor arrancara automaticamente en cada inicio de sesion."
         Write-Host "  Abre http://localhost:3000 en el navegador."
     }
 
     "uninstall" {
-        Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-        Write-Host "V Autostart eliminado"
+        Remove-ItemProperty -Path $RegPath -Name $AppName -ErrorAction SilentlyContinue
+        if (Test-Path $VbsPath) { Remove-Item $VbsPath -Force }
+        # Matar el proceso node que sirve este proyecto si esta corriendo
+        $procs = Get-WmiObject Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue
+        foreach ($p in $procs) {
+            if ($p.CommandLine -like "*$ServerJs*") {
+                Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Write-Host "OK Autostart eliminado"
     }
 
     "status" {
-        $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-        if ($task) {
-            Write-Host "● ClaudeManager esta registrado — Estado: $($task.State)"
+        $entry = (Get-ItemProperty -Path $RegPath -ErrorAction SilentlyContinue).$AppName
+        if ($entry) {
+            Write-Host "* ClaudeManager esta registrado en HKCU\Run"
+            Write-Host "  $entry"
         } else {
-            Write-Host "○ ClaudeManager NO esta registrado"
+            Write-Host "o ClaudeManager NO esta registrado"
         }
     }
 
