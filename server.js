@@ -446,6 +446,7 @@ function fetchOfficialUsage(cb) {
     let b = ''; res.on('data', d => b += d); res.on('end', () => {
       if (res.statusCode !== 200) {
         console.log(`[usage] /oauth/usage HTTP ${res.statusCode} — keeping last known value`);
+        if (res.statusCode === 429) officialBackoffUntil = Date.now() + 5 * 60 * 1000;
         cb(null); return;
       }
       try {
@@ -460,14 +461,30 @@ function fetchOfficialUsage(cb) {
   req.end();
 }
 
-let officialUsage = null, officialFetchedAt = 0, officialInFlight = false;
+let officialUsage = null, officialFetchedAt = 0, officialInFlight = false, officialBackoffUntil = 0;
+
+// Persist the last good value so a server restart doesn't drop the bar back
+// to the local estimate while the endpoint is rate-limiting us.
+const USAGE_CACHE_FILE = path.join(__dirname, 'logs', '.usage-cache.json');
+try {
+  const j = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf8'));
+  if (j && j.session && j.session.resetAt > Date.now()) {
+    officialUsage = j; officialFetchedAt = j.at || 0;
+  }
+} catch {}
+
 function getOfficialUsage(force, cb) {
   if (!force && officialUsage && Date.now() - officialFetchedAt < 30000) return cb(officialUsage);
   if (officialInFlight) return cb(officialUsage); // serve stale while a fetch runs
+  if (Date.now() < officialBackoffUntil) return cb(officialUsage); // 429 backoff — don't hammer
   officialInFlight = true;
   fetchOfficialUsage(u => {
     officialInFlight = false;
-    if (u) { officialUsage = u; officialFetchedAt = Date.now(); }
+    if (u) {
+      officialUsage = u; officialFetchedAt = Date.now();
+      try { fs.mkdirSync(path.dirname(USAGE_CACHE_FILE), { recursive: true }); } catch {}
+      fs.writeFile(USAGE_CACHE_FILE, JSON.stringify(u), () => {});
+    }
     cb(officialUsage);
   });
 }

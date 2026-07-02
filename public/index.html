@@ -1587,7 +1587,7 @@ const sbRefresh  = document.getElementById('sb-refresh');
 let official = null;   // { session:{percent,resetAt}, weekly:{percent,resetAt} } — exact, real
 let windowInfo = null; // local 5h window approximation (fallback if token unreadable)
 let lastUsageAt = 0;   // when the last usage payload arrived (for "actualizado hace…")
-let resetRefetchPending = false; // guard: fetch once the moment the session resets
+let resetRefetchFor = 0; // guard: force-fetch only once per expired resetAt value
 const BUDGET_KEY = 'cm-usage-budget';
 const DEFAULT_BUDGET = 9400000; // calibrated (cost-weighted) so the bar ≈ claude.ai's %
 function getBudget() { return parseInt(localStorage.getItem(BUDGET_KEY) || '', 10) || DEFAULT_BUDGET; }
@@ -1652,8 +1652,8 @@ function tickStatusBar() {
   // The moment the session resets, fetch immediately so the fresh window shows
   // up instead of getting stuck on "ahora" until the next poll.
   const s = sessionView();
-  if (s && s.resetAt && !resetRefetchPending && s.resetAt - Date.now() <= 0) {
-    resetRefetchPending = true;
+  if (s && s.resetAt && s.resetAt - Date.now() <= 0 && resetRefetchFor !== s.resetAt) {
+    resetRefetchFor = s.resetAt; // once per expiry — avoids hammering while rate-limited
     requestUsage(true);
   }
   if (!lastUsageAt) { sbUpdated.textContent = ''; return; }
@@ -1902,7 +1902,6 @@ ws.addEventListener('message', ev => {
     official = msg.official || null;
     windowInfo = msg.window || null;
     lastUsageAt = Date.now();
-    resetRefetchPending = false;
     // Default the bar to the first session that actually reports usage
     if (!activeSessionId || !document.querySelector(`.panel[data-id="${activeSessionId}"]`)) {
       const first = msg.sessions.find(s => s.usage);
