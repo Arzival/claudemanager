@@ -1238,20 +1238,30 @@ async function uploadDroppedEntries(entries, sessionId) {
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', e => e.preventDefault());
 
-// Fallback: pasting an image while no terminal has focus (e.g. right after
-// dragging a panel) used to go nowhere. Route it to the active session.
+// Fallback: pasting while no terminal has focus (fresh page load, after
+// clicking the bars, after dragging a panel…) used to go nowhere. Route
+// images AND text to the active session so Ctrl/Cmd+V always works.
 document.addEventListener('paste', e => {
   if (e.target.closest && e.target.closest('.tw')) return;            // per-terminal handler owns it
   if (e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]')) return;
-  const imgItem = Array.from(e.clipboardData?.items || []).find(it => it.type.startsWith('image/'));
-  if (!imgItem || !activeSessionId || !terms[activeSessionId]) return;
+  if (!activeSessionId || !terms[activeSessionId]) return;
   const p = document.querySelector(`.panel[data-id="${activeSessionId}"]`);
   if (!p || p.dataset.hidden) return;                                 // never paste into another workspace
-  e.preventDefault();
-  const reader = new FileReader();
-  reader.onload = () => ws.send(JSON.stringify({ type:'paste-image', sessionId:activeSessionId, data:reader.result }));
-  reader.readAsDataURL(imgItem.getAsFile());
-  terms[activeSessionId].focus();
+  const imgItem = Array.from(e.clipboardData?.items || []).find(it => it.type.startsWith('image/'));
+  if (imgItem) {
+    e.preventDefault();
+    const reader = new FileReader();
+    reader.onload = () => ws.send(JSON.stringify({ type:'paste-image', sessionId:activeSessionId, data:reader.result }));
+    reader.readAsDataURL(imgItem.getAsFile());
+    terms[activeSessionId].focus();
+    return;
+  }
+  const txt = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+  if (txt) {
+    e.preventDefault();
+    terms[activeSessionId].paste(txt);
+    terms[activeSessionId].focus();
+  }
 });
 
 new ResizeObserver(() => { updateCanvasHeight(); scheduleRefit(); }).observe(gridWrap);
