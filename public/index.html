@@ -1094,11 +1094,12 @@ function buildPanel(s, lay) {
     }
     if (e.type !== 'keydown') return true;
     // Ctrl+V (Windows/Linux): xterm swallows it and sends ^V to the pty
-    // instead of pasting. Read the clipboard ourselves and paste for real.
+    // instead of pasting. Read the clipboard ourselves — images included,
+    // since preventing the native paste event also bypasses the image handler.
     if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === 'v') {
-      if (navigator.clipboard && navigator.clipboard.readText) {
+      if (navigator.clipboard && (navigator.clipboard.read || navigator.clipboard.readText)) {
         e.preventDefault();
-        navigator.clipboard.readText().then(t => { if (t) term.paste(t); }).catch(() => {});
+        pasteFromClipboard(term, s.id);
         return false;
       }
       return true; // no clipboard API (insecure origin) — let the browser try
@@ -1185,6 +1186,30 @@ function buildPanel(s, lay) {
 
 // Escape shell-special characters the way native terminals do when a file is dropped
 function shEscape(p) { return p.replace(/[^\w\/.\-]/g, c => '\\' + c); }
+
+// Paste from the async clipboard API (Ctrl+V path): image wins — it goes to
+// the server like paste-image and the temp path is pasted; otherwise text.
+async function pasteFromClipboard(term, sessionId) {
+  try {
+    if (navigator.clipboard.read) {
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        const imgType = (it.types || []).find(t => t.startsWith('image/'));
+        if (imgType) {
+          const blob = await it.getType(imgType);
+          const r = new FileReader();
+          r.onload = () => ws.send(JSON.stringify({ type:'paste-image', sessionId, data:r.result }));
+          r.readAsDataURL(blob);
+          return;
+        }
+      }
+    }
+  } catch {} // permission denied or unsupported — try text below
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) term.paste(t);
+  } catch {}
+}
 
 // ── Folder-aware drop upload ──────────────────────────────────
 // Walks dropped directory entries recursively (skipping heavy junk dirs),
