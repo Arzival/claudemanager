@@ -430,7 +430,10 @@ function readOAuthToken() {
 
 function fetchOfficialUsage(cb) {
   const tok = readOAuthToken();
-  if (!tok) { cb(null); return; }
+  if (!tok) {
+    console.log('[usage] OAuth token not found (Keychain / ~/.claude/.credentials.json) — using local estimate');
+    cb(null); return;
+  }
   const req = https.request({
     hostname: 'api.anthropic.com', path: '/api/oauth/usage', method: 'GET', timeout: 8000,
     headers: {
@@ -441,7 +444,10 @@ function fetchOfficialUsage(cb) {
     },
   }, res => {
     let b = ''; res.on('data', d => b += d); res.on('end', () => {
-      if (res.statusCode !== 200) { cb(null); return; }
+      if (res.statusCode !== 200) {
+        console.log(`[usage] /oauth/usage HTTP ${res.statusCode} — keeping last known value`);
+        cb(null); return;
+      }
       try {
         const j = JSON.parse(b);
         const pick = w => w ? { percent: w.utilization, resetAt: Date.parse(w.resets_at) } : null;
