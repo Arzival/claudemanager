@@ -156,12 +156,14 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   font-size:10px;padding:2px 5px;cursor:pointer;font-family:inherit;transition:all .2s;flex-shrink:0;line-height:1}
 .pbtn:hover{border-color:rgba(0,245,255,.6);color:var(--cyan)}
 /* Git badge — branch + pending changes, click to open the drawer */
-.ph-git{background:transparent;border:1px solid rgba(57,255,20,.3);color:rgba(57,255,20,.75);
-  font-family:inherit;font-size:9px;padding:2px 7px;cursor:pointer;flex-shrink:0;
-  white-space:nowrap;letter-spacing:.5px;line-height:1;transition:all .15s}
-.ph-git:hover{border-color:var(--green);color:var(--green);box-shadow:0 0 8px rgba(57,255,20,.25)}
-.ph-git.dirty{border-color:rgba(255,214,10,.4);color:var(--yellow)}
-.ph-git.dirty:hover{border-color:var(--yellow);box-shadow:0 0 8px rgba(255,214,10,.3)}
+.ph-git{background:rgba(57,255,20,.06);border:1px solid rgba(57,255,20,.45);color:var(--green);
+  font-family:inherit;font-size:11px;font-weight:bold;padding:3px 9px;cursor:pointer;flex-shrink:0;
+  white-space:nowrap;letter-spacing:.5px;line-height:1;transition:all .15s;
+  text-shadow:0 0 6px rgba(57,255,20,.45)}
+.ph-git:hover{border-color:var(--green);box-shadow:0 0 10px rgba(57,255,20,.35)}
+.ph-git.dirty{background:rgba(255,214,10,.07);border-color:rgba(255,214,10,.55);color:var(--yellow);
+  text-shadow:0 0 6px rgba(255,214,10,.5)}
+.ph-git.dirty:hover{border-color:var(--yellow);box-shadow:0 0 10px rgba(255,214,10,.4)}
 
 /* GIT DRAWER — right-side panel with pending changes + diffs */
 #git-drawer{position:fixed;top:74px;right:0;bottom:34px;width:460px;max-width:92vw;z-index:450;
@@ -1139,7 +1141,13 @@ function buildPanel(s, lay) {
       return;
     }
 
-    // 2) Dropped files (Finder etc.) → upload, server replies with temp paths
+    // 2) Dropped files AND folders (Finder etc.) → upload, server replies
+    //    with temp paths. Entries must be captured synchronously here.
+    const entries = Array.from(e.dataTransfer.items || [])
+      .map(it => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+    if (entries.length) { uploadDroppedEntries(entries, s.id); return; }
+
+    // Fallback for browsers without webkitGetAsEntry (files only)
     const files = Array.from(e.dataTransfer.files || []);
     if (files.length) {
       const MAX = 50 * 1024 * 1024;
@@ -1167,6 +1175,64 @@ function buildPanel(s, lay) {
 
 // Escape shell-special characters the way native terminals do when a file is dropped
 function shEscape(p) { return p.replace(/[^\w\/.\-]/g, c => '\\' + c); }
+
+// ── Folder-aware drop upload ──────────────────────────────────
+// Walks dropped directory entries recursively (skipping heavy junk dirs),
+// uploads files + folder trees, and the server replies with temp paths.
+const DROP_SKIP_DIRS = new Set(['node_modules', '.git']);
+
+function walkDropEntry(entry, base, out) {
+  return new Promise(resolve => {
+    if (entry.isFile) {
+      entry.file(f => { out.push({ rel: base + entry.name, file: f }); resolve(); }, () => resolve());
+    } else if (entry.isDirectory) {
+      if (DROP_SKIP_DIRS.has(entry.name)) return resolve();
+      const reader = entry.createReader();
+      const readBatch = () => reader.readEntries(ents => {
+        // readEntries returns ≤100 per call — keep reading until empty
+        if (!ents.length) return resolve();
+        Promise.all(ents.map(en => walkDropEntry(en, base + entry.name + '/', out))).then(readBatch);
+      }, () => resolve());
+      readBatch();
+    } else resolve();
+  });
+}
+
+async function uploadDroppedEntries(entries, sessionId) {
+  const MAX_BYTES = 50 * 1024 * 1024, MAX_FILES = 400;
+  const singles = [];  // top-level files: { name, file }
+  const folders = [];  // { name, list: [{ rel, file }] } — rel includes the folder name
+  for (const en of entries) {
+    if (en.isFile) {
+      await new Promise(res => en.file(f => { singles.push({ name: en.name, file: f }); res(); }, res));
+    } else if (en.isDirectory) {
+      const list = [];
+      await walkDropEntry(en, '', list);
+      folders.push({ name: en.name, list });
+    }
+  }
+  const all = [...singles.map(x => x.file), ...folders.flatMap(fo => fo.list.map(x => x.file))];
+  if (!all.length) { alert('La carpeta está vacía (o solo contiene node_modules/.git)'); return; }
+  if (all.length > MAX_FILES) { alert(`Demasiados archivos (${all.length}, máx. ${MAX_FILES}) — la carpeta es muy grande`); return; }
+  if (all.reduce((a, f) => a + f.size, 0) > MAX_BYTES) { alert('Contenido demasiado grande para soltar (máx. 50MB en total)'); return; }
+
+  const toB64 = f => new Promise(res => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => res(null);
+    r.readAsDataURL(f);
+  });
+  const files = [];
+  for (const x of singles) { const d = await toB64(x.file); if (d) files.push({ name: x.name, data: d }); }
+  const folderPayload = [];
+  for (const fo of folders) {
+    const fl = [];
+    for (const x of fo.list) { const d = await toB64(x.file); if (d) fl.push({ rel: x.rel, data: d }); }
+    if (fl.length) folderPayload.push({ name: fo.name, files: fl });
+  }
+  if (files.length || folderPayload.length)
+    ws.send(JSON.stringify({ type:'drop-files', sessionId, files, folders: folderPayload }));
+}
 
 // Don't let drops outside a terminal navigate the page away from the dashboard
 document.addEventListener('dragover', e => e.preventDefault());
@@ -1351,6 +1417,8 @@ function selectTech(idx, el) {
   toolbar.style.display = 'flex';
   document.getElementById('proj-tech-label').textContent = projectData[idx].tech;
   const pEl=document.getElementById('proj-list'); pEl.innerHTML='';
+  if (!projectData[idx].projects.length)
+    pEl.innerHTML = '<li class="empty-h">carpeta vacía — usa «＋ Nueva carpeta» para crear un proyecto</li>';
   projectData[idx].projects.forEach(p=>{
     const li = document.createElement('li');
     li.style.cssText = 'display:flex;align-items:center;gap:6px;padding:7px 10px 7px 18px';

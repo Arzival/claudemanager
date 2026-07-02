@@ -186,8 +186,9 @@ function scanProjects() {
         .filter(p => p.isDirectory() && !p.name.startsWith('.'))
         .map(p => ({ name: p.name, path: path.join(techPath, p.name) }));
       return { tech: d.name, projects };
-    })
-    .filter(t => t.projects.length > 0);
+    });
+  // Note: empty tech folders are kept on purpose — a freshly created folder
+  // at root level must show up so projects can be created inside it.
 }
 
 // ── Token / session usage (pluggable per tool) ────────────────
@@ -616,19 +617,38 @@ wss.on('connection', (ws) => {
       } catch(err) { console.error('[paste-image]', err.message); }
 
     } else if (type === 'drop-files') {
-      // Files dragged onto a terminal. The browser can't reveal the original
-      // path, so we persist a temp copy (keeping the filename) and the client
-      // pastes that path — same pattern as paste-image.
+      // Files/folders dragged onto a terminal. The browser can't reveal the
+      // original path, so we persist a temp copy (files keep their name,
+      // folders keep their tree) and the client pastes that path.
       try {
         const paths = [];
         let n = 0;
+        const stamp = Date.now();
+        const safeSeg = s => String(s || 'archivo').replace(/[^\w.\-]+/g, '_').slice(-80) || '_';
+        const writeB64 = (dest, data) => {
+          const m = (data || '').match(/^data:([^;,]*);base64,(.*)$/s);
+          if (!m) return false;
+          fs.writeFileSync(dest, Buffer.from(m[2], 'base64'));
+          return true;
+        };
         for (const f of (msg.files || []).slice(0, 20)) {
-          const m = (f.data || '').match(/^data:([^;,]*);base64,(.*)$/s);
-          if (!m) continue;
-          const safe = String(f.name || 'archivo').replace(/[^\w.\-]+/g, '_').slice(-80) || 'archivo';
-          const tmpPath = path.join(require('os').tmpdir(), `cm_drop_${Date.now()}_${n++}_${safe}`);
-          fs.writeFileSync(tmpPath, Buffer.from(m[2], 'base64'));
-          paths.push(tmpPath);
+          const tmpPath = path.join(require('os').tmpdir(), `cm_drop_${stamp}_${n++}_${safeSeg(f.name)}`);
+          if (writeB64(tmpPath, f.data)) paths.push(tmpPath);
+        }
+        for (const folder of (msg.folders || []).slice(0, 5)) {
+          const base = path.join(require('os').tmpdir(), `cm_drop_${stamp}_${n++}`);
+          let wrote = 0;
+          for (const f of (folder.files || []).slice(0, 500)) {
+            // Sanitize every path segment; anything escaping the base dir is dropped
+            const rel = String(f.rel || '').split('/')
+              .filter(seg => seg && seg !== '.' && seg !== '..').map(safeSeg).join(path.sep);
+            if (!rel) continue;
+            const dest = path.join(base, rel);
+            if (!dest.startsWith(base + path.sep)) continue;
+            fs.mkdirSync(path.dirname(dest), { recursive: true });
+            if (writeB64(dest, f.data)) wrote++;
+          }
+          if (wrote) paths.push(path.join(base, safeSeg(folder.name)));
         }
         if (paths.length) ws.send(JSON.stringify({ type:'files-dropped', sessionId:msg.sessionId, paths }));
       } catch(err) { console.error('[drop-files]', err.message); }
