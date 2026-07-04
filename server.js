@@ -9,7 +9,7 @@ const pty = require('node-pty');
 process.on('uncaughtException', err => console.error('[uncaughtException]', err.message));
 process.on('unhandledRejection', err => console.error('[unhandledRejection]', err));
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const BUFFER_LIMIT = 1000;          // max chunks of replay history per session
 const BUFFER_BYTES = 256 * 1024;    // cap replay history at ~256 KB per session
 const FLUSH_MS = 16; // coalesce PTY output into one broadcast per frame
@@ -64,6 +64,105 @@ let saveTimer = null;
 function scheduleSave() {
   if (saveTimer) return;
   saveTimer = setTimeout(() => { saveTimer = null; saveConfig(); }, 400);
+}
+
+// ── Command log (global) ──────────────────────────────────────
+// Reconstructs the line the user types from raw pty input and records it on
+// Enter into ONE global list (not per-project): recurring commands like
+// `npm run dev` are useful in every project. The client filters this list by
+// prefix as you type. Commands typed inside ssh count too — locally the
+// foreground process for the whole remote session is the ssh client.
+const COMMANDS_FILE = path.join(DATA_DIR, 'commands.json');
+const MAX_COMMANDS = 3000;
+let commands = [];
+try { commands = JSON.parse(fs.readFileSync(COMMANDS_FILE, 'utf8')); } catch {}
+if (!Array.isArray(commands)) commands = [];
+
+let cmdSaveTimer = null;
+function scheduleCmdSave() {
+  if (cmdSaveTimer) return;
+  cmdSaveTimer = setTimeout(() => {
+    cmdSaveTimer = null;
+    fs.writeFile(COMMANDS_FILE, JSON.stringify(commands), () => {});
+  }, 500);
+}
+
+let cmdBroadcastTimer = null;
+function scheduleCmdBroadcast() {
+  if (cmdBroadcastTimer) return;
+  cmdBroadcastTimer = setTimeout(() => {
+    cmdBroadcastTimer = null;
+    broadcast({ type: 'cmd-log', commands });
+  }, 300);
+}
+
+// The suggestion box only makes sense at a shell prompt (or inside ssh) —
+// never while typing prose into Claude or another TUI.
+const SHELL_NAMES = new Set(['bash','zsh','sh','fish','dash','ksh','tcsh','csh',
+  'ssh','mosh','mosh-client','powershell','pwsh','cmd','nu','wsl']);
+function fgIsShell(s) {
+  try {
+    let name = String((s.proc && s.proc.process) || '');
+    name = path.basename(name).toLowerCase().replace(/^-/, '').replace(/\.exe$/, '');
+    return SHELL_NAMES.has(name);
+  } catch { return false; }
+}
+
+// Never record what's typed at a password prompt: with echo off the keystrokes
+// still reach us (ssh/su/git over https). Check the tail of the last output.
+function atPasswordPrompt(id) {
+  const buf = buffers.get(id);
+  if (!buf || !buf.length) return false;
+  const tail = buf.slice(-3).join('').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').slice(-200);
+  return /(password|passphrase|contraseña|passcode|verification code)[^\n]*:?\s*$/i.test(tail);
+}
+
+function recordCommand(cmd) {
+  const now = Date.now();
+  const hit = commands.find(c => c.cmd === cmd);
+  if (hit) { hit.count++; hit.last = now; }
+  else {
+    commands.push({ cmd, count: 1, last: now });
+    if (commands.length > MAX_COMMANDS) {
+      commands.sort((a, b) => (b.count - a.count) || (b.last - a.last));
+      commands.length = MAX_COMMANDS;
+    }
+  }
+  scheduleCmdSave();
+  scheduleCmdBroadcast();
+}
+
+// Per-session reconstruction of the current input line. Escape sequences
+// (arrows = history recall / cursor moves) and Tab (completion) make the real
+// line diverge from what was typed, so they poison the capture until it clears.
+function trackInput(s, id, data) {
+  const t = s.tracker || (s.tracker = { line: '', dirty: false, shell: false });
+  data = data.replace(/\x1b\[20[01]~/g, ''); // bracketed-paste markers
+  for (let i = 0; i < data.length; i++) {
+    const ch = data[i];
+    if (ch === '\r' || ch === '\n') {
+      const { line, dirty, shell } = t;
+      t.line = ''; t.dirty = false;
+      const cmd = line.trim();
+      // Leading space = "don't record" (same convention as shell history)
+      if (!dirty && shell && cmd.length >= 2 && !line.startsWith(' ') && !atPasswordPrompt(id))
+        recordCommand(cmd);
+    } else if (ch === '\x7f' || ch === '\b') {
+      t.line = t.line.slice(0, -1);
+    } else if (ch === '\x15' || ch === '\x03') { // Ctrl+U / Ctrl+C
+      t.line = ''; t.dirty = false;
+    } else if (ch === '\x1b') {
+      t.dirty = true;
+      // Skip the escape sequence's bytes so they don't land in the buffer
+      if (data[i + 1] === '[') { i++; while (i + 1 < data.length && !/[A-Za-z~]/.test(data[i + 1])) i++; i++; }
+      else if (data[i + 1] === 'O') i += 2;
+    } else if (ch === '\t') {
+      t.dirty = true;
+    } else if (ch >= ' ' && t.line.length < 300) {
+      if (!t.line) t.shell = fgIsShell(s); // sampled as the line starts — who owns the prompt
+      t.line += ch;
+    }
+  }
 }
 
 // Try to auto-detect claude binary path
@@ -568,6 +667,8 @@ wss.on('connection', (ws) => {
     backgrounds: listBackgrounds(),
   }));
 
+  if (commands.length) ws.send(JSON.stringify({ type: 'cmd-log', commands }));
+
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
@@ -589,7 +690,10 @@ wss.on('connection', (ws) => {
 
     } else if (type === 'input') {
       const s = sessions.get(sessionId);
-      if (s && s.proc && s.status === 'running') s.proc.write(msg.data);
+      if (s && s.proc && s.status === 'running') {
+        s.proc.write(msg.data);
+        try { trackInput(s, sessionId, msg.data); } catch {}
+      }
 
     } else if (type === 'resize') {
       const s = sessions.get(sessionId);
@@ -764,6 +868,19 @@ wss.on('connection', (ws) => {
           });
         });
       });
+
+    } else if (type === 'cmd-state') {
+      // Is the session sitting at a shell prompt right now? Gates the box.
+      const s = sessions.get(sessionId);
+      ws.send(JSON.stringify({
+        type: 'cmd-state', sessionId,
+        shell: !!(s && s.proc && s.status === 'running' && fgIsShell(s)),
+      }));
+
+    } else if (type === 'cmd-delete') {
+      commands = commands.filter(c => c.cmd !== msg.cmd);
+      scheduleCmdSave();
+      scheduleCmdBroadcast();
 
     } else if (type === 'save-subtitle') {
       const s = sessions.get(sessionId);
