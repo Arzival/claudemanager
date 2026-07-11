@@ -714,6 +714,30 @@ function persistToWorkspace() {
   }, 300);
 }
 
+// ── Scroll por workspace ──────────────────────────────────────
+// El scroll vive en #grid-wrap (compartido), así que sin esto cambiar de
+// workspace hereda el scroll del anterior. Cada workspace guarda su posición
+// y se restaura al volver (también sobrevive recargas vía localStorage).
+let wsScrollTimer;
+gridWrap.addEventListener('scroll', () => {
+  clearTimeout(wsScrollTimer);
+  wsScrollTimer = setTimeout(() => {
+    if (!wsStore.active) return;
+    writeWs(wsStore.active, { scroll: { x: gridWrap.scrollLeft, y: gridWrap.scrollTop } });
+    saveWsStore();
+  }, 200);
+});
+
+function restoreWsScroll() {
+  const sc = activeWs()?.scroll;
+  // El alto del canvas se recalcula al aplicar el layout; restaurar en el
+  // siguiente frame para que el clamp del navegador use el tamaño final.
+  requestAnimationFrame(() => {
+    gridWrap.scrollLeft = sc ? sc.x : 0;
+    gridWrap.scrollTop  = sc ? sc.y : 0;
+  });
+}
+
 function applyWorkspace(name) {
   const ws = wsStore.workspaces[name];
   if (!ws) return;
@@ -739,12 +763,19 @@ function applyWorkspace(name) {
 }
 
 function switchWorkspace(name) {
+  // Cancela el guardado diferido de scroll: si disparara después del cambio,
+  // escribiría el scroll del workspace viejo en el nuevo.
+  clearTimeout(wsScrollTimer);
   if (wsStore.active) {
-    writeWs(wsStore.active, { panelIds: visiblePanelIds(), layout: snapshotLayout() });
+    writeWs(wsStore.active, {
+      panelIds: visiblePanelIds(), layout: snapshotLayout(),
+      scroll: { x: gridWrap.scrollLeft, y: gridWrap.scrollTop },
+    });
   }
   wsStore.active = name;
   saveWsStore();
   applyWorkspace(name);
+  restoreWsScroll();
   applyWorkspaceTheme();
   renderWsBar();
 }
@@ -755,8 +786,12 @@ function newWorkspace() {
   const n = name.trim().toUpperCase();
   if (wsStore.workspaces[n] && !confirm(`"${n}" ya existe. ¿Sobreescribir?`)) return;
   // Save current before switching
+  clearTimeout(wsScrollTimer);
   if (wsStore.active)
-    writeWs(wsStore.active, { panelIds: visiblePanelIds(), layout: snapshotLayout() });
+    writeWs(wsStore.active, {
+      panelIds: visiblePanelIds(), layout: snapshotLayout(),
+      scroll: { x: gridWrap.scrollLeft, y: gridWrap.scrollTop },
+    });
   // New workspace starts EMPTY — hide all panels
   wsStore.workspaces[n] = { panelIds: [], layout: {}, bg: null, bgOpacity: 1 };
   wsStore.active = n;
@@ -764,7 +799,7 @@ function newWorkspace() {
     p.dataset.hidden = '1';
     p.style.visibility = 'hidden'; p.style.pointerEvents = 'none';
   });
-  updateCanvasHeight(); saveWsStore(); applyWorkspaceTheme(); renderWsBar();
+  updateCanvasHeight(); restoreWsScroll(); saveWsStore(); applyWorkspaceTheme(); renderWsBar();
 }
 
 function deleteWorkspace(name) {
@@ -2003,6 +2038,7 @@ ws.addEventListener('message', ev => {
           }
         });
         updateCanvasHeight();
+        restoreWsScroll(); // cada workspace recuerda su scroll, también tras recargar
         [0, 100, 400, 1200].forEach(d => setTimeout(scheduleRefit, d));
       }));
     }
