@@ -874,15 +874,20 @@ function debouncedFit(id, delay = 80) {
   fitTimers[id] = setTimeout(() => { try { fits[id]?.fit(); } catch {} }, delay);
 }
 
-// ── Canvas height: expand to fit all panels ───────────────────
+// ── Canvas size: expand in both axes to fit all panels ────────
 function updateCanvasHeight() {
   // Only visible panels count — hidden ones belong to other workspaces and
   // keep stale positions that would inflate the canvas with phantom scroll.
   const panels = [...canvas.querySelectorAll('.panel')].filter(p => !p.dataset.hidden);
-  if (!panels.length) { canvas.style.height = ''; return; }
+  if (!panels.length) { canvas.style.height = ''; canvas.style.width = ''; return; }
   const maxBottom = Math.max(...panels.map(p =>
     parseFloat(p.style.top) + parseFloat(p.style.height)));
   canvas.style.height = Math.max(gridWrap.clientHeight, maxBottom + 20) + 'px';
+  // Same expansion to the right: panels can be dragged past the viewport edge
+  // and the horizontal scrollbar follows them.
+  const maxRight = Math.max(...panels.map(p =>
+    parseFloat(p.style.left) + parseFloat(p.style.width)));
+  canvas.style.width = Math.max(gridWrap.clientWidth, maxRight + 20) + 'px';
 }
 
 // ── Default layout ────────────────────────────────────────────
@@ -932,14 +937,14 @@ function initDragMove(panel, header) {
   header.addEventListener('mousedown', e => {
     if (e.target.closest('button')) return;
     e.preventDefault(); raise(panel);
-    const W = gridWrap.clientWidth;
     const sx = e.clientX, sy = e.clientY;
     const sl = parseFloat(panel.style.left), st = parseFloat(panel.style.top);
-    const pw = parseFloat(panel.style.width);
     panel.style.opacity = '.88';
 
     function onMove(e) {
-      const l = Math.max(0, Math.min(W - pw, sl + e.clientX - sx));
+      // Sin tope a la derecha: el canvas crece (updateCanvasHeight) y aparece
+      // scroll horizontal, igual que ya pasa hacia abajo.
+      const l = Math.max(0, sl + e.clientX - sx);
       const t = Math.max(0, st + e.clientY - sy);
       panel.style.left = l + 'px';
       panel.style.top  = t + 'px';
