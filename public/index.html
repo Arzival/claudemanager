@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-webgl@0.16.0/lib/xterm-addon-webgl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <style>
 :root{--cyan:#00f5ff;--pink:#ff006e;--yellow:#ffd60a;--green:#39ff14;--bg:#05050f;--bg2:#090916;--border:rgba(0,245,255,.35)}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -192,6 +193,72 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   white-space:pre;color:#8aa0b4;font-family:'Courier New',monospace}
 .dl-a{color:#39ff14}.dl-d{color:#ff4070}.dl-h{color:var(--cyan)}.dl-m{color:rgba(160,180,200,.45)}
 .gd-empty{padding:16px;color:rgba(160,180,200,.45);font-size:11px;line-height:1.6}
+/* Manija para ajustar el ancho del drawer arrastrando su borde izquierdo */
+#gd-resize{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:ew-resize;z-index:3}
+#gd-resize:hover,#gd-resize.dragging{background:rgba(0,245,255,.3)}
+/* Toggle MD / Diff (solo visible con archivos .md seleccionados) */
+#gd-view{display:flex;gap:4px;flex-shrink:0}
+.gd-vbtn{background:transparent;border:1px solid rgba(0,245,255,.25);color:rgba(0,245,255,.5);
+  font-family:inherit;font-size:10px;font-weight:bold;padding:3px 8px;cursor:pointer;line-height:1}
+.gd-vbtn:hover{border-color:rgba(0,245,255,.5)}
+.gd-vbtn.active{background:rgba(0,245,255,.12);color:var(--cyan);border-color:rgba(0,245,255,.6)}
+/* Vista markdown renderizada */
+#gd-md{flex:1;overflow:auto;padding:12px 18px;font-size:12px;line-height:1.65;color:#b8cbe0}
+#gd-md h1,#gd-md h2,#gd-md h3,#gd-md h4{color:var(--cyan);margin:14px 0 6px;line-height:1.3;
+  text-shadow:0 0 8px rgba(0,245,255,.3)}
+#gd-md h1{font-size:17px;border-bottom:1px solid rgba(0,245,255,.25);padding-bottom:5px}
+#gd-md h2{font-size:15px}
+#gd-md h3{font-size:13px}
+#gd-md h4{font-size:12px}
+#gd-md p{margin:7px 0}
+#gd-md ul,#gd-md ol{margin:7px 0;padding-left:22px}
+#gd-md li{margin:3px 0}
+#gd-md code{background:rgba(0,245,255,.08);border:1px solid rgba(0,245,255,.15);
+  padding:1px 5px;border-radius:3px;font-size:11px;color:var(--yellow)}
+#gd-md pre{background:#04040f;border:1px solid rgba(0,245,255,.15);padding:10px 12px;
+  margin:8px 0;overflow-x:auto;border-radius:4px}
+#gd-md pre code{background:none;border:none;padding:0;color:#9fe8d0}
+#gd-md blockquote{border-left:3px solid rgba(0,245,255,.4);margin:8px 0;padding:2px 12px;
+  color:rgba(160,180,200,.7)}
+#gd-md table{border-collapse:collapse;margin:8px 0;font-size:11px}
+#gd-md th,#gd-md td{border:1px solid rgba(0,245,255,.2);padding:4px 8px}
+#gd-md th{background:rgba(0,245,255,.07);color:var(--cyan)}
+#gd-md a{color:var(--cyan)}
+#gd-md hr{border:none;border-top:1px solid rgba(0,245,255,.2);margin:12px 0}
+#gd-md strong{color:#e8f4ff}
+#gd-md img{max-width:100%}
+#gd-md::-webkit-scrollbar{width:4px}
+#gd-md::-webkit-scrollbar-thumb{background:rgba(0,245,255,.3);border-radius:2px}
+
+/* VOZ — mic push-to-talk, toast y selector de voz por panel */
+#sb-mic{background:rgba(0,245,255,.07);border:1px solid rgba(0,245,255,.55);color:var(--cyan);
+  font-size:15px;padding:3px 11px;cursor:pointer;font-family:inherit;line-height:1.2;
+  flex-shrink:0;user-select:none;border-radius:3px;text-shadow:0 0 8px rgba(0,245,255,.5);
+  box-shadow:0 0 8px rgba(0,245,255,.18)}
+#sb-mic:hover{border-color:var(--cyan);box-shadow:0 0 14px rgba(0,245,255,.45)}
+/* Contador del panel activo — mismo estilo que el contador de la sesión */
+#sb-voice-win{color:var(--green);font-weight:bold;font-size:12px;flex-shrink:0;
+  text-shadow:0 0 6px rgba(57,255,20,.35);white-space:nowrap}
+#sb-mic.rec{border-color:var(--pink);color:var(--pink);animation:micpulse 1s ease-in-out infinite}
+@keyframes micpulse{0%,100%{background:rgba(255,0,110,.08);box-shadow:0 0 4px rgba(255,0,110,.4)}
+  50%{background:rgba(255,0,110,.28);box-shadow:0 0 14px rgba(255,0,110,.7)}}
+#voice-toast{position:fixed;bottom:44px;left:50%;transform:translateX(-50%);z-index:900;
+  background:rgba(4,7,18,.95);border:1px solid rgba(0,245,255,.5);color:#cfe6f5;
+  padding:8px 16px;font-size:12px;max-width:70vw;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;box-shadow:0 0 18px rgba(0,245,255,.2)}
+.ph-voice.on{color:var(--cyan);border-color:rgba(0,245,255,.6);text-shadow:0 0 6px rgba(0,245,255,.4)}
+#voice-menu{position:fixed;z-index:950;width:270px;max-height:320px;overflow-y:auto;
+  background:#07071a;border:1px solid rgba(0,245,255,.4);box-shadow:0 8px 24px rgba(0,0,0,.6);font-size:11px}
+#voice-menu::-webkit-scrollbar{width:4px}
+#voice-menu::-webkit-scrollbar-thumb{background:rgba(0,245,255,.3)}
+.vm-hdr{padding:5px 10px;color:rgba(0,245,255,.5);font-size:9px;letter-spacing:1px;
+  border-bottom:1px solid rgba(0,245,255,.15);background:rgba(0,245,255,.03)}
+.vm-item{padding:5px 10px;cursor:pointer;color:#a8c0d8;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;display:flex;align-items:baseline;gap:6px}
+.vm-item:hover{background:rgba(0,245,255,.08);color:#fff}
+.vm-item.sel{color:var(--cyan);background:rgba(0,245,255,.06)}
+.vm-src{margin-left:auto;color:rgba(160,180,200,.4);font-size:9px;flex-shrink:0}
+.vm-lang{color:#c8d8e8}
 
 /* COMMAND LOG — caja de sugerencias de comandos sobre la terminal */
 .cmdbox{position:absolute;left:8px;right:8px;bottom:30px;z-index:6;display:none;
@@ -362,19 +429,28 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   <span id="sb-ctx-txt"></span>
   <span id="sb-total"></span>
   <span id="sb-updated"></span>
+  <span id="sb-voice-win" style="display:none" title="Panel activo de voz — los dictados sin nombre van aquí hasta que corra el tiempo"></span>
+  <button id="sb-mic" title="Mantén presionado para dictar (o mantén F9): «nombre, tu mensaje»">🎙</button>
   <button id="sb-refresh" title="Actualizar consumo ahora">⟳</button>
 </div>
+<div id="voice-toast" style="display:none"></div>
 
 <!-- Git drawer: pending changes + diff for one session -->
 <div id="git-drawer">
+  <div id="gd-resize" title="Arrastra para ajustar el ancho"></div>
   <div class="gd-hdr">
     <span id="gd-branch"></span>
     <span id="gd-name"></span>
     <span id="gd-count"></span>
+    <div id="gd-view" style="display:none">
+      <button class="gd-vbtn" id="gd-view-md" title="Vista renderizada">MD</button>
+      <button class="gd-vbtn" id="gd-view-diff" title="Ver diff">Diff</button>
+    </div>
     <button id="gd-close" title="Cerrar (Esc)">✕</button>
   </div>
   <ul id="gd-files"></ul>
   <pre id="gd-diff"></pre>
+  <div id="gd-md" style="display:none"></div>
 </div>
 
 <!-- Project picker -->
@@ -1111,6 +1187,558 @@ function acceptCmd(id, cmd, run) {
   try { terms[id]?.focus(); } catch {}
 }
 
+// ── VOZ — dictado por push-to-talk + lectura de respuestas ────
+// Flujo: mantén F9 (o el botón 🎙) y di «nombre, tu mensaje». El audio va al
+// servidor, whisper.cpp lo transcribe local, aquí se rutea a la sesión cuyo
+// nombre/nota coincida (con tolerancia difusa — whisper escribe «Xtifi» por
+// «qstify») y se manda como prompt. Si ese panel tiene voz TTS asignada, la
+// respuesta de Claude se lee con speechSynthesis cuando la salida se asienta.
+const sbMic = document.getElementById('sb-mic');
+const voiceToastEl = document.getElementById('voice-toast');
+let micStream = null, micCtx = null, recording = false, recChunks = [], recRate = 48000;
+let micReinit = false; // el mic por defecto cambió (AirPods…) — recapturar
+
+// Si conectas/desconectas audífonos, suelta el stream para que el siguiente
+// dictado capture el micrófono por defecto NUEVO (sin recargar la página).
+function micTeardown() {
+  try { micStream?.getTracks().forEach(t => t.stop()); } catch {}
+  try { micCtx?.close(); } catch {}
+  micStream = null; micCtx = null;
+}
+navigator.mediaDevices?.addEventListener?.('devicechange', () => {
+  if (recording) micReinit = true; // no cortar una grabación en curso
+  else micTeardown();
+});
+const voiceByS = {};          // sessionId -> nombre de voz TTS ('' = sin voz)
+let voicePendingSend = null;  // { id, nm, prompt, timer } — confirmación antes de enviar
+
+function vToast(msg, ms = 3000) {
+  voiceToastEl.textContent = msg;
+  voiceToastEl.style.display = 'block';
+  clearTimeout(vToast._t);
+  if (ms) vToast._t = setTimeout(() => voiceToastEl.style.display = 'none', ms);
+}
+
+// Bip corto de confirmación — imprescindible cuando disparas el dictado
+// desde otra app y no ves el toast. Usa el AudioContext del mic (ya activo).
+function beep(freq) {
+  try {
+    if (!micCtx) return;
+    const o = micCtx.createOscillator(), g = micCtx.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.value = 0.07;
+    o.connect(g); g.connect(micCtx.destination);
+    o.start(); o.stop(micCtx.currentTime + 0.09);
+  } catch {}
+}
+
+// Remuestrea a 16kHz (promediando la ventana), pasa a Int16 y codifica base64
+function pcmEncode(chunks) {
+  const total = chunks.reduce((a, c) => a + c.length, 0);
+  const all = new Float32Array(total);
+  let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
+  const ratio = recRate / 16000, n = Math.floor(all.length / ratio);
+  const pcm = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = Math.floor(i * ratio), b = Math.min(all.length, Math.floor((i + 1) * ratio));
+    let s = 0; for (let j = a; j < b; j++) s += all[j];
+    pcm[i] = Math.max(-32768, Math.min(32767, Math.round((s / (b - a || 1)) * 32767)));
+  }
+  const bytes = new Uint8Array(pcm.buffer);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+// Dictado incremental: mientras grabas, los tramos ya hablados se van
+// mandando a transcribir en segundo plano (cortando en silencios); al soltar
+// solo falta la colita — el resultado sale casi al instante aunque hables
+// varios minutos.
+let recSeq = 0, recQuietMs = 0, recSentAny = false;
+
+function micFlushPartial() {
+  if (!recChunks.length) return;
+  ws.send(JSON.stringify({ type: 'voice-partial', seq: recSeq++, audio: pcmEncode(recChunks) }));
+  recChunks = [];
+  recSentAny = true;
+}
+
+async function micStart() {
+  if (recording) return;
+  try {
+    if (!micStream) {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+      micCtx = new AudioContext();
+      const src = micCtx.createMediaStreamSource(micStream);
+      const node = micCtx.createScriptProcessor(4096, 1, 1);
+      node.onaudioprocess = e => {
+        if (!recording) return;
+        const buf = e.inputBuffer.getChannelData(0);
+        recChunks.push(new Float32Array(buf));
+        // Detección simple de silencio para cortar tramos en pausas naturales
+        let s = 0; for (let i = 0; i < buf.length; i += 4) s += buf[i] * buf[i];
+        const rms = Math.sqrt(s / (buf.length / 4));
+        const frameMs = (buf.length / recRate) * 1000;
+        recQuietMs = rms < 0.01 ? recQuietMs + frameMs : 0;
+        const segSec = recChunks.reduce((a, c) => a + c.length, 0) / recRate;
+        // corta en un silencio de ≥400ms pasados 8s, o a la fuerza a los 15s
+        if ((segSec > 8 && recQuietMs > 400) || segSec > 15) micFlushPartial();
+      };
+      src.connect(node); node.connect(micCtx.destination);
+      recRate = micCtx.sampleRate;
+    }
+    if (micCtx.state === 'suspended') await micCtx.resume();
+    recChunks = []; recSeq = 0; recQuietMs = 0; recSentAny = false;
+    recording = true;
+    sbMic.classList.add('rec');
+    beep(880);
+    vToast('🎙 escuchando… (suelta para enviar)', 0);
+  } catch (e) {
+    vToast('No se pudo acceder al micrófono: ' + e.message);
+  }
+}
+
+function micStop() {
+  if (!recording) return;
+  recording = false;
+  sbMic.classList.remove('rec');
+  const total = recChunks.reduce((a, c) => a + c.length, 0);
+  if (!recSentAny && total < recRate * 0.4) {
+    recChunks = [];
+    vToast('muy corto — mantén presionado mientras hablas');
+    if (micReinit) { micReinit = false; micTeardown(); }
+    return;
+  }
+  // La colita final (o '' si no queda nada útil — el servidor une los tramos)
+  const tail = total >= recRate * 0.3 ? pcmEncode(recChunks) : '';
+  recChunks = [];
+  ws.send(JSON.stringify({ type: 'voice-final', seq: recSeq++, audio: tail }));
+  beep(590);
+  vToast('⏳ transcribiendo…', 0);
+  if (micReinit) { micReinit = false; micTeardown(); } // aplica el cambio de mic ya sin grabación en curso
+}
+
+// Tecla de push-to-talk configurable: clic derecho en 🎙 y presiona la que
+// quieras (se guarda por navegador). Se comparan e.code, no e.key, para que
+// sirvan también los modificadores derechos (⌥ derecho, etc.).
+let pttCode = localStorage.getItem('claudemgr-ptt-code') || 'F9';
+let pttLabel = localStorage.getItem('claudemgr-ptt-label') || 'F9';
+let pttCapture = false;
+// «Panel activo»: tras cada dictado, ese panel recibe los dictados SIN nombre
+// mientras la conversación siga viva (ventana deslizante, configurable).
+let voiceActive = null; // { id, nm, at }
+function voiceWindowMin() {
+  const m = parseFloat(localStorage.getItem('claudemgr-voice-window-min'));
+  return isNaN(m) ? 5 : Math.max(0, m); // default 5 min; 0 = desactivado
+}
+function updateMicTitle() {
+  sbMic.title = `Mantén presionado para dictar (o mantén ${pttLabel}) — clic derecho: opciones`;
+}
+updateMicTitle();
+
+sbMic.addEventListener('mousedown', e => { if (e.button === 0) { e.preventDefault(); micStart(); } });
+// Menú del mic: tecla, ventana del panel activo y el FILTRO DE IDIOMAS de las
+// voces (global — aplica a los selectores de todos los paneles).
+function renderMicMenu(m) {
+  const win = voiceWindowMin();
+  const sel = voiceLangsGet();
+  const counts = {};
+  for (const v of allVoicesMerged()) { const b = baseLang(v.lang); if (b) counts[b] = (counts[b] || 0) + 1; }
+  const langs = Object.keys(counts).sort((a, b) => (b === 'es') - (a === 'es') || a.localeCompare(b));
+  m.innerHTML =
+    `<div class="vm-hdr">DICTADO</div>` +
+    `<div class="vm-item" data-a="key">🎹 Cambiar tecla (actual: ${escHtml(pttLabel)})</div>` +
+    `<div class="vm-item" data-a="win">⏱ Panel activo: ${win > 0 ? win + ' min' : 'desactivado'}</div>` +
+    `<div class="vm-hdr">IDIOMAS DE VOCES — marca uno o varios (ninguno = todos)</div>` +
+    langs.map(l =>
+      `<div class="vm-item vm-lang" data-l="${l}">${sel.includes(l) ? '☑' : '☐'} ${escHtml(langLabel(l))} <span class="vm-src">${counts[l]}</span></div>`
+    ).join('');
+}
+
+sbMic.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  closeVoiceMenu();
+  const m = document.createElement('div');
+  m.id = 'voice-menu';
+  const r = sbMic.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(r.left - 120, innerWidth - 290)) + 'px';
+  m.style.bottom = (innerHeight - r.top + 6) + 'px';
+  renderMicMenu(m);
+  m.addEventListener('click', ev => {
+    const lang = ev.target.closest('.vm-lang');
+    if (lang) { // toggle de idioma — el menú se queda abierto y se repinta
+      const l = lang.dataset.l;
+      const sel = voiceLangsGet();
+      const i = sel.indexOf(l);
+      if (i >= 0) sel.splice(i, 1); else sel.push(l);
+      localStorage.setItem('claudemgr-voice-langs', JSON.stringify(sel));
+      renderMicMenu(m);
+      return;
+    }
+    const it = ev.target.closest('.vm-item');
+    if (!it) return;
+    closeVoiceMenu();
+    if (it.dataset.a === 'key') {
+      pttCapture = true;
+      vToast('presiona la tecla que usarás para dictar… (Esc cancela)', 0);
+    } else if (it.dataset.a === 'win') {
+      const win = voiceWindowMin();
+      const v = prompt('Minutos de la "conversación activa" por voz — los dictados sin nombre van al último panel usado (0 = desactivar):', String(win));
+      if (v === null) return;
+      const n = Math.max(0, parseFloat(v) || 0);
+      localStorage.setItem('claudemgr-voice-window-min', String(n));
+      vToast(n > 0 ? `✓ panel activo durante ${n} min tras cada dictado` : '✓ desactivado — siempre hay que decir el nombre', 4000);
+    }
+  });
+  document.body.appendChild(m);
+  setTimeout(() => document.addEventListener('mousedown', voiceMenuAway), 0);
+});
+
+// Contador del panel activo en la barra (estilo contador de sesión): quién
+// recibe los dictados sin nombre y cuánto le queda a la ventana.
+const sbVoiceWin = document.getElementById('sb-voice-win');
+setInterval(() => {
+  const win = voiceWindowMin();
+  if (!voiceActive || win <= 0 || !terms[voiceActive.id]) { sbVoiceWin.style.display = 'none'; return; }
+  const left = win * 60000 - (Date.now() - voiceActive.at);
+  if (left <= 0) { sbVoiceWin.style.display = 'none'; return; }
+  const mm = Math.floor(left / 60000), ss = Math.floor((left % 60000) / 1000);
+  sbVoiceWin.textContent = `🎯 ${voiceActive.nm} ⟳ ${mm}:${String(ss).padStart(2, '0')}`;
+  sbVoiceWin.style.display = '';
+}, 1000);
+document.addEventListener('mouseup', () => { if (recording) micStop(); });
+
+document.addEventListener('keydown', e => {
+  if (pttCapture) {
+    e.preventDefault(); e.stopPropagation();
+    if (e.key === 'Escape') { pttCapture = false; vToast('cambio de tecla cancelado'); return; }
+    // Nada que interfiera al escribir en las terminales
+    if (!e.code || /^(Key[A-Z]|Digit\d|Numpad\d|Space|Enter|NumpadEnter|Backspace|Tab|Arrow|Delete|Escape)/.test(e.code)) {
+      vToast('esa tecla interferiría al escribir — usa una F, bloq mayús, o un modificador derecho (⌥/⌃)', 5000);
+      return;
+    }
+    pttCode = e.code;
+    pttLabel = e.code.replace(/^(Control|Alt|Meta|Shift)(Left|Right)$/, '$1-$2');
+    localStorage.setItem('claudemgr-ptt-code', pttCode);
+    localStorage.setItem('claudemgr-ptt-label', pttLabel);
+    pttCapture = false;
+    updateMicTitle();
+    vToast(`✓ dictado: mantener ${pttLabel}`);
+    return;
+  }
+  if (e.code === pttCode && !e.repeat) { e.preventDefault(); e.stopPropagation(); micStart(); }
+  else if (e.key === 'Escape' && voiceCancel()) { e.preventDefault(); e.stopPropagation(); }
+}, true);
+document.addEventListener('keyup', e => {
+  if (e.code === pttCode) { e.preventDefault(); e.stopPropagation(); micStop(); }
+}, true);
+
+// Cancela lo que esté vivo del flujo de voz; true si había algo que cancelar
+function voiceCancel() {
+  let did = false;
+  if (voicePendingSend) { clearTimeout(voicePendingSend.timer); voicePendingSend = null; vToast('cancelado ✕'); did = true; }
+  if (window.speechSynthesis && speechSynthesis.speaking) { speechSynthesis.cancel(); did = true; }
+  for (const id of Object.keys(ttsPlay)) {
+    if (ttsPlay[id].audio || ttsPlay[id].queue.length) { stopEngineSpeech(id); did = true; }
+  }
+  if (voiceReading) {
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'stop-watch' }));
+    voiceReading = null; did = true;
+  }
+  return did;
+}
+
+// ── Ruteo: «nombre, mensaje» → sesión ─────────────────────────
+const VOICE_FILLER = new Set(['oye', 'hey', 'ok', 'okey', 'okay', 'ey', 'oe', 'a', 'ver']);
+const normVoice = s => (s || '').toLowerCase().normalize('NFD')
+  .replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+
+function levDist(a, b) {
+  if (Math.abs(a.length - b.length) > 4) return 99;
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      dp[i][j] = Math.min(dp[i-1][j] + 1, dp[i][j-1] + 1, dp[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+  return dp[a.length][b.length];
+}
+
+function routeVoiceText(raw) {
+  let text = (raw || '').trim();
+  if (!text) { vToast('no se entendió nada'); return; }
+  let words = text.split(/\s+/);
+  while (words.length && VOICE_FILLER.has(normVoice(words[0]))) words.shift();
+  if (!words.length) { vToast('no se entendió nada'); return; }
+
+  // Candidatos: nota (subtítulo) y nombre de cada panel visible
+  const cands = [];
+  canvas.querySelectorAll('.panel').forEach(p => {
+    if (p.dataset.hidden) return;
+    const id = p.dataset.id;
+    const sub = p.querySelector('.ph-sub')?.textContent.trim();
+    const name = p.querySelector('.ph-name')?.textContent.trim();
+    if (sub) cands.push({ id, nm: sub });
+    if (name) cands.push({ id, nm: name });
+  });
+
+  // Prueba las primeras 1..4 palabras contra cada candidato, con tolerancia
+  // difusa proporcional al largo del nombre (whisper deforma nombres raros).
+  // Desempate entre paneles con el MISMO nombre (ej. el Claude y el shell del
+  // mismo proyecto): gana el que corre una IA (reporta consumo de tokens) y,
+  // de persistir el empate, el de actividad más reciente.
+  const tieRank = id => (usageData[id] ? 1e13 : 0) + (lastOut[id] || 0);
+  let best = null;
+  for (const c of cands) {
+    const target = normVoice(c.nm);
+    if (target.length < 2) continue;
+    for (let k = 1; k <= Math.min(4, words.length); k++) {
+      const joined = normVoice(words.slice(0, k).join(''));
+      if (joined.length < 2) continue;
+      const d = levDist(joined, target);
+      const tol = Math.max(1, Math.floor(target.length * 0.34));
+      if (d > tol) continue;
+      const better = !best || d < best.d ||
+        (d === best.d && (k > best.k || (k === best.k && tieRank(c.id) > tieRank(best.id))));
+      if (better) best = { id: c.id, nm: c.nm, k, d };
+    }
+  }
+  if (!best) {
+    // Sin nombre reconocido → «panel activo»: continúa la conversación con el
+    // último panel usado, si la ventana deslizante sigue viva.
+    const win = voiceWindowMin();
+    if (win > 0 && voiceActive && Date.now() - voiceActive.at < win * 60000 && terms[voiceActive.id]) {
+      const prompt = words.join(' ').replace(/^[\s,.:;¿?¡!—-]+/, '').trim();
+      if (!prompt) { vToast('no se entendió nada'); return; }
+      voicePendingSend = {
+        id: voiceActive.id, nm: voiceActive.nm, prompt,
+        timer: setTimeout(() => {
+          const ps = voicePendingSend; voicePendingSend = null;
+          sendVoicePrompt(ps.id, ps.nm, ps.prompt);
+        }, 1500),
+      };
+      vToast(`→ ${voiceActive.nm} (continúa): ${prompt}   (Esc cancela)`, 0);
+      return;
+    }
+    vToast(`¿a qué consola? no reconocí el nombre en: «${text}»`, 5000);
+    return;
+  }
+
+  const prompt = words.slice(best.k).join(' ').replace(/^[\s,.:;¿?¡!—-]+/, '').trim();
+  if (!prompt) {
+    // Solo dijiste el nombre → deja ese panel como el activo de la conversación
+    if (voiceWindowMin() > 0) {
+      voiceActive = { id: best.id, nm: best.nm, at: Date.now() };
+      vToast(`🎯 panel activo: ${best.nm} — dicta sin nombre durante ${voiceWindowMin()} min`, 4000);
+    } else {
+      vToast(`entendí «${best.nm}» pero faltó el mensaje`, 4000);
+    }
+    return;
+  }
+
+  // Confirmación breve: se manda en 1.5s salvo que canceles con Esc
+  voicePendingSend = {
+    id: best.id, nm: best.nm, prompt,
+    timer: setTimeout(() => {
+      const ps = voicePendingSend; voicePendingSend = null;
+      sendVoicePrompt(ps.id, ps.nm, ps.prompt);
+    }, 1500),
+  };
+  vToast(`→ ${best.nm}: ${prompt}   (Esc cancela)`, 0);
+}
+
+function sendVoicePrompt(id, nm, prompt) {
+  if (!terms[id]) { vToast('esa consola ya no existe'); return; }
+  voiceActive = { id, nm, at: Date.now() }; // cada envío renueva la ventana
+  // El Enter va aparte y con pausa: si llega pegado al texto, Claude lo trata
+  // como parte de un "pegado" y lo convierte en salto de línea sin enviar.
+  ws.send(JSON.stringify({ type: 'input', sessionId: id, data: prompt }));
+  setTimeout(() => ws.send(JSON.stringify({ type: 'input', sessionId: id, data: '\r' })), 300);
+  vToast(`✓ enviado a ${nm}`);
+  if (!voiceByS[id] || !window.speechSynthesis) return; // sin voz asignada — lo lees tú
+  // Lectura incremental: el servidor vigila el transcript de la sesión y va
+  // mandando cada bloque de texto conforme Claude lo termina de escribir;
+  // aquí solo se encolan en la voz (ver response-block).
+  speechSynthesis.cancel(); // corta cualquier lectura anterior
+  voiceReading = { id, nm, blocks: 0 };
+  ws.send(JSON.stringify({ type: 'watch-response', sessionId: id }));
+}
+let voiceReading = null; // { id, nm, blocks } — sesión cuya respuesta se está leyendo
+
+// Markdown → texto hablable: fuera código, símbolos y enlaces
+function speechFromMarkdown(md) {
+  let t = md.replace(/```[\s\S]*?```/g, ' — código omitido — ');
+  t = t.replace(/`([^`]+)`/g, '$1');
+  t = t.replace(/^#{1,6}\s*/gm, '');
+  t = t.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*\n]+)\*/g, '$1');
+  t = t.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  t = t.replace(/^\s*[-*+]\s+/gm, '').replace(/^\s*\d+\.\s+/gm, '');
+  t = t.replace(/\|/g, ', ').replace(/[▐▌│─╭╮╰╯]/g, ' ');
+  return t.replace(/\n{2,}/g, '. ').replace(/\n/g, '. ').replace(/\.\s*\.+/g, '.').trim();
+}
+
+// ── TTS con la voz del panel ──────────────────────────────────
+// Dos familias de voces: las del sistema (speechSynthesis, el navegador las
+// reproduce) y las de motor (kokoro:/piper: — el servidor sintetiza WAVs que
+// aquí se encolan y encadenan).
+let voiceList = [];
+function refreshVoiceList() { try { voiceList = speechSynthesis.getVoices(); } catch {} }
+if (window.speechSynthesis) {
+  refreshVoiceList();
+  speechSynthesis.onvoiceschanged = refreshVoiceList;
+}
+
+let ttsVoices = [];            // catálogo Kokoro/Piper que manda el servidor
+const isEngineVoice = v => /^(kokoro|piper):/.test(v || '');
+const ttsGen = {};             // sessionId -> generación (para cancelar)
+const ttsPlay = {};            // sessionId -> { queue: [], audio }
+let ttsSeq = 0;
+
+function chunkText(text, max) {
+  const parts = text.match(/[^.!?\n]+[.!?]?/g) || [text];
+  let buf = '';
+  const chunks = [];
+  for (const p of parts) {
+    if ((buf + p).length > max) { if (buf.trim()) chunks.push(buf); buf = p; }
+    else buf += p;
+  }
+  if (buf.trim()) chunks.push(buf);
+  return chunks.slice(0, 60);
+}
+
+function stopEngineSpeech(id) {
+  ttsGen[id] = (ttsGen[id] || 0) + 1;
+  const p = ttsPlay[id];
+  if (p) { p.queue = []; try { p.audio?.pause(); } catch {} p.audio = null; }
+}
+
+function enqueueTtsWav(id, wav) {
+  const p = ttsPlay[id] || (ttsPlay[id] = { queue: [], audio: null });
+  p.queue.push(wav);
+  if (!p.audio) playNextTts(id);
+}
+
+function playNextTts(id) {
+  const p = ttsPlay[id];
+  if (!p) return;
+  const wav = p.queue.shift();
+  if (!wav) { p.audio = null; return; }
+  const a = new Audio('data:audio/wav;base64,' + wav);
+  p.audio = a;
+  a.onended = () => playNextTts(id);
+  a.onerror = () => playNextTts(id);
+  a.play().catch(() => playNextTts(id));
+}
+
+// append=true encola SIN cortar lo que ya se está leyendo — así los bloques
+// que van llegando en vivo se encadenan uno tras otro.
+function speak(id, text, append) {
+  const vName = voiceByS[id];
+  if (!vName) return;
+  if (isEngineVoice(vName)) {
+    if (!append) stopEngineSpeech(id);
+    const gen = ttsGen[id] || 0;
+    for (const c of chunkText(text, 380)) {
+      ws.send(JSON.stringify({ type: 'tts', reqId: `${gen}:${++ttsSeq}`,
+        sessionId: id, voice: vName, text: c.trim() }));
+    }
+    return;
+  }
+  if (!window.speechSynthesis) return;
+  const v = voiceList.find(x => x.name === vName);
+  if (!append) speechSynthesis.cancel();
+  for (const c of chunkText(text, 220)) {
+    const u = new SpeechSynthesisUtterance(c.trim());
+    if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'es-MX';
+    u.rate = 1.05;
+    speechSynthesis.speak(u);
+  }
+}
+
+// ── Selector de voz por panel ─────────────────────────────────
+// Lista PLANA con todas las fuentes mezcladas (sistema + Kokoro + Piper),
+// filtrada por los idiomas que marques arriba (persistidos globalmente).
+function voiceLangsGet() {
+  try { return JSON.parse(localStorage.getItem('claudemgr-voice-langs')) || []; }
+  catch { return []; }
+}
+const baseLang = l => (l || '').toLowerCase().split(/[-_]/)[0];
+let langNamer = null;
+try { langNamer = new Intl.DisplayNames(['es'], { type: 'language' }); } catch {}
+function langLabel(c) {
+  try { const n = langNamer && langNamer.of(c); return n ? n[0].toUpperCase() + n.slice(1) : c; }
+  catch { return c; }
+}
+
+function allVoicesMerged() {
+  refreshVoiceList();
+  const sys = voiceList.map(v => ({ id: v.name, name: v.name, lang: v.lang || '', source: 'sistema' }));
+  return [...ttsVoices, ...sys];
+}
+
+function voiceDisplayName(val) {
+  if (!val) return '';
+  const hit = allVoicesMerged().find(v => v.id === val);
+  return hit ? hit.name : val;
+}
+
+function updateVoiceBtn(id) {
+  const btn = document.querySelector(`.panel[data-id="${id}"] .ph-voice`);
+  if (!btn) return;
+  const on = !!voiceByS[id];
+  btn.textContent = on ? '🔊' : '🔇';
+  btn.classList.toggle('on', on);
+  btn.title = on ? `Voz: ${voiceDisplayName(voiceByS[id])}` : 'Sin voz — clic para elegir una';
+}
+
+function closeVoiceMenu() {
+  document.getElementById('voice-menu')?.remove();
+  document.removeEventListener('mousedown', voiceMenuAway);
+}
+function voiceMenuAway(e) {
+  if (!e.target.closest('#voice-menu')) closeVoiceMenu();
+}
+
+function renderVoiceMenu(m, id) {
+  const sel = voiceLangsGet();
+  const cur = voiceByS[id] || '';
+  const shown = allVoicesMerged()
+    .filter(v => !sel.length || sel.includes(baseLang(v.lang)))
+    .sort((a, b) => baseLang(a.lang).localeCompare(baseLang(b.lang)) || a.name.localeCompare(b.name));
+  const filtro = sel.length ? sel.map(langLabel).join(', ') : 'todos';
+  m.innerHTML =
+    `<div class="vm-hdr">VOCES — idiomas: ${escHtml(filtro)} (cámbialos con clic derecho en 🎙)</div>` +
+    `<div class="vm-item ${cur === '' ? 'sel' : ''}" data-v="">🔇 Sin voz (yo la leo)</div>` +
+    (shown.map(v =>
+      `<div class="vm-item ${v.id === cur ? 'sel' : ''}" data-v="${escHtml(v.id)}">${escHtml(v.name)}` +
+      `<span class="vm-src">${escHtml(v.source)}${v.downloaded === false ? ' · ⬇' + (v.sizeMb || '?') + 'MB' : ''}</span></div>`
+    ).join('') || '<div class="vm-hdr">sin voces en esos idiomas</div>');
+}
+
+function openVoiceMenu(id, btn) {
+  closeVoiceMenu();
+  const m = document.createElement('div');
+  m.id = 'voice-menu';
+  const r = btn.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(r.left, innerWidth - 290)) + 'px';
+  m.style.top = Math.min(r.bottom + 4, innerHeight - 340) + 'px';
+  renderVoiceMenu(m, id);
+  m.addEventListener('click', e => {
+    const it = e.target.closest('.vm-item');
+    if (!it || it.dataset.v === undefined) return;
+    const val = it.dataset.v;
+    voiceByS[id] = val;
+    ws.send(JSON.stringify({ type: 'save-voice', sessionId: id, voice: val }));
+    updateVoiceBtn(id);
+    if (val) speak(id, 'Así voy a leer las respuestas de esta consola', false); // demo
+    closeVoiceMenu();
+  });
+  document.body.appendChild(m);
+  setTimeout(() => document.addEventListener('mousedown', voiceMenuAway), 0);
+}
+
 // ── Build panel ───────────────────────────────────────────────
 function buildPanel(s, lay) {
   lay = getSavedLayout(s.id) || lay;
@@ -1128,6 +1756,7 @@ function buildPanel(s, lay) {
       <span class="ph-sub">${s.subtitle ? escHtml(s.subtitle) : ''}</span>
       <span class="ph-cwd" title="${s.cwd}">${s.cwd}</span>
       <button class="ph-git" style="display:none" title="Rama y cambios pendientes"></button>
+      <button class="pbtn ph-voice" title="Voz de lectura de respuestas dictadas">🔇</button>
       <button class="pbtn closebtn" title="Cerrar">✕</button>
     </div>
     <div class="tw" id="tw-${s.id}"></div>
@@ -1172,6 +1801,12 @@ function buildPanel(s, lay) {
     e.stopPropagation();
     openGitDrawer(s.id);
   });
+
+  // Voz TTS del panel (viene persistida del servidor en s.voice)
+  if (s.voice !== undefined) voiceByS[s.id] = s.voice || '';
+  const voiceBtn = panel.querySelector('.ph-voice');
+  voiceBtn.addEventListener('click', e => { e.stopPropagation(); openVoiceMenu(s.id, voiceBtn); });
+  updateVoiceBtn(s.id);
 
   // Subtitle — double-click to edit, Enter/Escape/blur to save
   const subEl = panel.querySelector('.ph-sub');
@@ -1758,15 +2393,76 @@ function renderGitDrawer() {
     li.addEventListener('click', () => selectGitFile(f, li));
     filesEl.appendChild(li);
   });
-  if (gdFile && !fileStillThere) { gdFile = null; document.getElementById('gd-diff').textContent = ''; }
+  if (gdFile && !fileStillThere) {
+    gdFile = null;
+    document.getElementById('gd-diff').textContent = '';
+    document.getElementById('gd-md').innerHTML = '';
+    document.getElementById('gd-view').style.display = 'none';
+    gdShow('diff');
+  }
+}
+
+let gdView = 'diff'; // vista activa para el archivo seleccionado: 'diff' | 'md'
+const isMdFile = f => /\.(md|markdown)$/i.test((f.includes(' -> ') ? f.split(' -> ').pop() : f).trim());
+
+function gdShow(view) {
+  gdView = view;
+  document.getElementById('gd-diff').style.display = view === 'md' ? 'none' : '';
+  document.getElementById('gd-md').style.display   = view === 'md' ? 'block' : 'none';
+  document.getElementById('gd-view-md').classList.toggle('active', view === 'md');
+  document.getElementById('gd-view-diff').classList.toggle('active', view === 'diff');
+}
+
+function gdRequestView() {
+  if (gdView === 'md') {
+    document.getElementById('gd-md').textContent = 'cargando…';
+    ws.send(JSON.stringify({ type:'read-file', sessionId: gdSession, file: gdFile }));
+  } else {
+    document.getElementById('gd-diff').textContent = 'cargando diff…';
+    ws.send(JSON.stringify({ type:'git-diff', sessionId: gdSession, file: gdFile }));
+  }
 }
 
 function selectGitFile(f, li) {
   gdFile = f;
   document.querySelectorAll('#gd-files li').forEach(l => l.classList.remove('active'));
   li.classList.add('active');
-  document.getElementById('gd-diff').textContent = 'cargando diff…';
-  ws.send(JSON.stringify({ type:'git-diff', sessionId: gdSession, file: f }));
+  const md = isMdFile(f);
+  document.getElementById('gd-view').style.display = md ? 'flex' : 'none';
+  gdShow(md ? 'md' : 'diff'); // los .md abren renderizados por defecto
+  gdRequestView();
+}
+
+document.getElementById('gd-view-md').addEventListener('click', () => {
+  if (gdFile && gdView !== 'md') { gdShow('md'); gdRequestView(); }
+});
+document.getElementById('gd-view-diff').addEventListener('click', () => {
+  if (gdFile && gdView !== 'diff') { gdShow('diff'); gdRequestView(); }
+});
+
+// El markdown se renderiza con marked (CDN) y se sanitiza el HTML resultante:
+// fuera scripts/iframes/handlers on* — es contenido local, pero por si acaso.
+function sanitizeHtml(html) {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  t.content.querySelectorAll('script,style,iframe,object,embed,link,meta').forEach(n => n.remove());
+  t.content.querySelectorAll('*').forEach(n => {
+    [...n.attributes].forEach(a => {
+      if (/^on/i.test(a.name) || (/^(href|src)$/i.test(a.name) && /^\s*javascript:/i.test(a.value)))
+        n.removeAttribute(a.name);
+    });
+  });
+  return t.innerHTML;
+}
+
+function renderMdFile(content, error) {
+  const el = document.getElementById('gd-md');
+  if (error || content == null) {
+    el.textContent = 'No se pudo leer el archivo' + (error ? ': ' + error : '');
+    return;
+  }
+  if (window.marked) el.innerHTML = sanitizeHtml(marked.parse(content));
+  else el.textContent = content; // sin CDN (offline) — texto plano
 }
 
 function renderGitDiff(d) {
@@ -1783,10 +2479,37 @@ function renderGitDiff(d) {
 function openGitDrawer(id) {
   gdSession = id; gdFile = null;
   document.getElementById('gd-diff').textContent = '';
+  document.getElementById('gd-md').innerHTML = '';
+  document.getElementById('gd-view').style.display = 'none';
+  gdShow('diff');
   gitDrawer.classList.add('open');
   renderGitDrawer();
   requestGitInfo(); // fresh state the moment it opens
 }
+
+// Ancho del drawer ajustable arrastrando el borde izquierdo (persistido)
+const GD_W_KEY = 'claudemgr-gd-width';
+{
+  const saved = parseFloat(localStorage.getItem(GD_W_KEY));
+  if (saved) gitDrawer.style.width = saved + 'px';
+}
+document.getElementById('gd-resize').addEventListener('mousedown', e => {
+  e.preventDefault();
+  const handle = e.target;
+  handle.classList.add('dragging');
+  function onMove(ev) {
+    const w = Math.max(320, Math.min(window.innerWidth * 0.92, window.innerWidth - ev.clientX));
+    gitDrawer.style.width = w + 'px';
+  }
+  function onUp() {
+    handle.classList.remove('dragging');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    localStorage.setItem(GD_W_KEY, parseFloat(gitDrawer.style.width));
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+});
 function closeGitDrawer() { gitDrawer.classList.remove('open'); gdSession = null; gdFile = null; }
 
 document.getElementById('gd-close').addEventListener('click', closeGitDrawer);
@@ -2072,6 +2795,12 @@ ws.addEventListener('message', ev => {
     delete gitInfo[msg.sessionId];
     delete cmdTrack[msg.sessionId]; delete cmdShellOk[msg.sessionId];
     delete cmdMatchCache[msg.sessionId]; delete cmdSel[msg.sessionId];
+    delete voiceByS[msg.sessionId];
+    if (voiceReading && voiceReading.id === msg.sessionId) voiceReading = null;
+    if (voiceActive && voiceActive.id === msg.sessionId) voiceActive = null;
+    stopEngineSpeech(msg.sessionId);
+    delete ttsPlay[msg.sessionId]; delete ttsGen[msg.sessionId];
+    if (voicePendingSend && voicePendingSend.id === msg.sessionId) { clearTimeout(voicePendingSend.timer); voicePendingSend = null; }
     if (gdSession === msg.sessionId) closeGitDrawer();
     if (activeSessionId === msg.sessionId) { activeSessionId = null; renderStatusBar(); }
     // Remove from all workspaces
@@ -2155,6 +2884,48 @@ ws.addEventListener('message', ev => {
     }
     renderStatusBar();
 
+  } else if (msg.type === 'response-block') {
+    // Un bloque de la respuesta recién escrito al transcript — se lee ya,
+    // aunque Claude siga generando los siguientes.
+    if (voiceReading && voiceReading.id === msg.sessionId && voiceByS[msg.sessionId] && msg.text) {
+      if (voiceReading.blocks === 0) vToast('🔊 leyendo conforme responde… (Esc detiene)', 4000);
+      voiceReading.blocks++;
+      speak(msg.sessionId, speechFromMarkdown(msg.text), true);
+    }
+
+  } else if (msg.type === 'response-end') {
+    if (voiceReading && voiceReading.id === msg.sessionId) {
+      if (!voiceReading.blocks && !msg.blocks)
+        vToast('🔇 no hubo respuesta nueva que leer (¿se envió el prompt?)', 6000);
+      voiceReading = null;
+    }
+
+  } else if (msg.type === 'ptt') {
+    // Disparo remoto (atajo global del SO vía /ptt/*) — funciona sin foco
+    if (msg.action === 'start') micStart();
+    else if (msg.action === 'stop') micStop();
+    else recording ? micStop() : micStart();
+
+  } else if (msg.type === 'tts-catalog') {
+    ttsVoices = msg.voices || [];
+
+  } else if (msg.type === 'tts-status') {
+    vToast('⬇ ' + msg.msg, 0);
+
+  } else if (msg.type === 'tts-audio') {
+    // Un trozo sintetizado por el servidor — se descarta si ya se canceló
+    const gen = parseInt(msg.reqId, 10);
+    if (msg.error) vToast('⚠ voz: ' + msg.error, 5000);
+    else if (gen === (ttsGen[msg.sessionId] || 0)) enqueueTtsWav(msg.sessionId, msg.wav);
+
+  } else if (msg.type === 'voice-text') {
+    if (msg.error) vToast('⚠ ' + msg.error, 6000);
+    else routeVoiceText(msg.text);
+
+  } else if (msg.type === 'voice-saved') {
+    voiceByS[msg.sessionId] = msg.voice || '';
+    updateVoiceBtn(msg.sessionId);
+
   } else if (msg.type === 'cmd-log') {
     cmdLog = msg.commands || [];
     // Repinta las cajas abiertas (p.ej. tras borrar un comando con clic derecho)
@@ -2170,6 +2941,10 @@ ws.addEventListener('message', ev => {
 
   } else if (msg.type === 'git-diff') {
     if (msg.sessionId === gdSession && msg.file === gdFile) renderGitDiff(msg.diff || '');
+
+  } else if (msg.type === 'file-content') {
+    if (msg.sessionId === gdSession && msg.file === gdFile && gdView === 'md')
+      renderMdFile(msg.content, msg.error);
 
   } else if (msg.type === 'backgrounds') {
     backgrounds = msg.files || [];

@@ -109,6 +109,121 @@ El layout se guarda automáticamente en `localStorage` — al recargar o reinici
 | Escribir a la IA | Escribe directamente en el panel |
 | Limpiar el panel localmente | **Ctrl + K** |
 
+## Control por voz 🎙
+
+Puedes dictarle prompts a cualquier consola diciendo su nombre, y opcionalmente que la respuesta se te lea en voz alta. Todo el reconocimiento es **local** (whisper.cpp en tu equipo): el audio nunca sale de tu máquina, y funciona en cualquier navegador (Opera GX, Brave, Chrome, Firefox…) porque no depende de las APIs de voz del navegador.
+
+### Requisito: whisper.cpp + modelo
+
+El servidor necesita el binario `whisper-cli` en el PATH y un modelo en `~/.claudemanager/models/ggml-small.bin` (~500 MB, se descarga una sola vez):
+
+- **macOS**: `brew install whisper-cpp`
+- **Linux**: `brew install whisper-cpp` (Homebrew en Linux) o compila [whisper.cpp](https://github.com/ggerganov/whisper.cpp) y pon `whisper-cli` en el PATH
+- **Windows**: descarga el binario desde los [releases de whisper.cpp](https://github.com/ggerganov/whisper.cpp/releases) y agrega su carpeta al PATH
+
+Modelo (igual en los tres sistemas):
+
+```bash
+mkdir -p ~/.claudemanager/models
+curl -L -o ~/.claudemanager/models/ggml-small.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+> El micrófono en el navegador requiere contexto seguro: funciona en `localhost` sin más. Si accedes al dashboard por IP desde otra máquina, el navegador bloqueará el mic (haría falta HTTPS).
+
+### Dictar a una consola
+
+1. **Nómbrala**: el nombre del proyecto ya sirve, o ponle una nota corta (doble clic junto al nombre del panel) — la nota también funciona como "nombre de voz".
+2. **Mantén presionado el botón 🎙** de la barra inferior (o su tecla, default F9) y di: *"oye qstifydesktop, ¿qué falta por hacer?"*.
+3. Suelta: whisper transcribe, un aviso muestra a qué consola va y qué entendió, y se envía en 1.5 s (**Esc cancela**). El matching del nombre es tolerante — no importa si whisper escribe "Xtifi Desktop" en vez de "qstifydesktop". Si dos paneles comparten nombre, gana el que corre una IA y luego el de actividad más reciente (aun así, tags únicos = ruteo más fiable).
+
+**Panel activo (conversación continua):** después de cada dictado, ese panel queda "activo" — los siguientes dictados **sin nombre** le llegan directo, mientras sigas hablando con pausas menores a la ventana (5 min por defecto; cada mensaje la renueva). Decir solo el nombre (*"desk"*) también lo selecciona sin mandar nada. Pasada la ventana en silencio, vuelve el "¿a qué consola?". Junto al 🎙 de la barra verás el contador en vivo (`🎯 desk ⟳ 4:32`) de quién recibe los dictados sin nombre y cuánto le queda.
+
+**Clic derecho en 🎙** abre las opciones de voz: cambiar la tecla de push-to-talk, ajustar los minutos de la ventana del panel activo (0 la desactiva) y el **filtro de idiomas de las voces** (marca uno o varios; nada marcado = todas — aplica a los selectores de todos los paneles). Todo se guarda por navegador.
+
+### Voz de respuesta (opcional, por panel)
+
+Cada panel tiene un botón **🔇/🔊** en su barra de título:
+
+- Clic → selector de voz: una **lista plana** con todas las voces disponibles mezcladas (ya filtradas por los idiomas que marcaste en el menú del 🎙), cada una con su etiqueta de origen. O **"Sin voz (yo la leo)"** — el default. Al elegir una suena una demo corta.
+- Si el panel tiene voz asignada **y el prompt fue dictado**, la respuesta se lee **conforme Claude la va escribiendo**, bloque a bloque (el código se omite). **Esc detiene la lectura.** Prompts escritos con teclado nunca se leen.
+- La lectura sale del transcript real de Claude Code en disco, no de la pantalla — llega completa y limpia.
+- La voz elegida se guarda en el servidor y sobrevive reinicios.
+
+**Fuentes de voces** (las tres se mezclan en el selector, cada una con su etiqueta):
+
+| Fuente | Qué es | Requiere |
+|--------|--------|----------|
+| sistema | Las voces TTS de tu SO vía el navegador | Nada |
+| Kokoro | Motor neuronal local (calidad alta) — español e inglés, ~31 voces | Instalación abajo |
+| Piper | Motor neuronal local ligero — todo su catálogo es/en (~50 voces) | Instalación abajo |
+
+Los motores neuronales son **opcionales**: sin instalarlos, el selector muestra solo las voces del sistema. Las voces Piper se **descargan solas la primera vez** que las eliges (verás el aviso con el tamaño y el marcador `⬇` en el selector); después quedan en `~/.claudemanager/voices/piper/`. Nada sale de tu equipo.
+
+Notas de rendimiento: la primera vez que un motor se usa paga un arranque en frío (~2-5s cargando el modelo); el servidor **precalienta al arrancar** los motores de las voces que ya tengas asignadas a paneles, así que en el uso diario no lo notas. La lectura incremental sintetiza cada bloque mientras suena el anterior.
+
+Instalación de los motores (macOS/Linux; en Windows cambia las rutas):
+
+```bash
+python3 -m venv ~/.claudemanager/tts/venv
+~/.claudemanager/tts/venv/bin/pip install kokoro-onnx soundfile piper-tts
+# modelo Kokoro (~340MB, una vez)
+curl -L -o ~/.claudemanager/tts/kokoro-v1.0.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
+curl -L -o ~/.claudemanager/tts/voices-v1.0.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+# índice de voces Piper (para el catálogo y las descargas bajo demanda)
+mkdir -p ~/.claudemanager/voices
+curl -L -o ~/.claudemanager/voices/piper-index.json https://huggingface.co/rhasspy/piper-voices/resolve/main/voices.json
+```
+
+### Dictado largo (hasta 5 minutos, sin espera)
+
+Puedes hablar hasta 5 minutos por dictado. Mientras mantienes presionado, los tramos ya hablados se **transcriben en segundo plano** (cortando en tus pausas naturales), así que al soltar solo se procesa la colita final y el texto sale casi al instante — sin importar cuánto hayas hablado.
+
+### Dictar sin tener el foco (atajo global del sistema)
+
+Las páginas web no reciben teclas globales, así que el servidor expone endpoints de disparo y cada quien los conecta al atajo global de su sistema operativo:
+
+```
+POST http://localhost:3000/ptt/toggle   # una pulsación abre, otra corta y envía
+POST http://localhost:3000/ptt/start    # para herramientas con keydown/keyup
+POST http://localhost:3000/ptt/stop
+```
+
+El dashboard suena un **bip agudo** al empezar a escuchar y uno **grave** al enviar, para que sepas que te oyó sin mirar la pestaña. Si hay varias pestañas abiertas, solo la más reciente reacciona. La grabación y la lectura en voz alta funcionan con la pestaña en segundo plano.
+
+**macOS — skhd (recomendado):**
+
+```bash
+brew install koekeishiya/formulae/skhd
+mkdir -p ~/.config/skhd
+echo 'f16 : curl -s -X POST localhost:3000/ptt/toggle' >> ~/.config/skhd/skhdrc
+skhd --start-service
+```
+
+La primera vez macOS pedirá darle permiso de **Accesibilidad** a skhd (Ajustes → Privacidad y seguridad → Accesibilidad); después `skhd --restart-service`. Cambia `f16` por la tecla que quieras.
+
+> ¿Por qué no la app Atajos? Sus atajos de teclado globales son poco confiables — con teclas de función macOS les agrega el modificador 🌐/Fn y a menudo simplemente no disparan. skhd escucha la tecla física directo.
+
+**Windows — AutoHotkey v2** (este sí permite "mantener presionado" de verdad):
+
+```autohotkey
+F16::{
+    Run('curl -s -X POST localhost:3000/ptt/start', , 'Hide')
+    KeyWait('F16')                     ; espera a que sueltes la tecla
+    Run('curl -s -X POST localhost:3000/ptt/stop', , 'Hide')
+}
+```
+
+O la variante toggle con una sola línea: `F16::Run('curl -s -X POST localhost:3000/ptt/toggle', , 'Hide')`.
+
+**Linux** — atajos personalizados del escritorio:
+
+- **GNOME**: Configuración → Teclado → Atajos personalizados → comando: `curl -s -X POST localhost:3000/ptt/toggle`
+- **KDE**: Preferencias → Atajos → Agregar orden
+- O con [sxhkd](https://github.com/baskerville/sxhkd): `F16` + la misma línea de curl en `~/.config/sxhkd/sxhkdrc`
+
+> Los endpoints no llevan autenticación, igual que el resto del dashboard: cualquiera con acceso al puerto 3000 de tu máquina puede dispararlos. En uso local (localhost) no cambia nada.
+
 ## Tokens y consumo
 
 Los tokens solo se consumen cuando la IA procesa texto y genera una respuesta. Ejecutar comandos del sistema **no consume tokens**:

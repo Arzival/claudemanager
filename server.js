@@ -117,6 +117,17 @@ function atPasswordPrompt(id) {
   return /(password|passphrase|contraseña|passcode|verification code)[^\n]*:?\s*$/i.test(tail);
 }
 
+// Estado de dictado incremental por cliente + cola de whisper (uno a la vez
+// para no saturar el CPU con varias transcripciones simultáneas)
+const dictations = new Map(); // ws -> Map(seq -> Promise<{text,error}>)
+let whisperChain = Promise.resolve();
+function transcribeP(audioB64) {
+  const run = () => new Promise(res => transcribe(audioB64, (text, error) => res({ text, error })));
+  const p = whisperChain.then(run, run);
+  whisperChain = p;
+  return p;
+}
+
 function recordCommand(cmd) {
   const now = Date.now();
   const hit = commands.find(c => c.cmd === cmd);
@@ -163,6 +174,53 @@ function trackInput(s, id, data) {
       t.line += ch;
     }
   }
+}
+
+// ── Voz: transcripción local con whisper.cpp ──────────────────
+// El navegador manda PCM crudo (16kHz, mono, Int16) grabado con push-to-talk;
+// aquí se envuelve en un WAV y se transcribe con whisper-cli. Todo local —
+// el audio nunca sale de la máquina. El TTS de salida vive en el navegador
+// (speechSynthesis), el servidor solo persiste la voz elegida por sesión.
+const WHISPER_MODEL = path.join(DATA_DIR, 'models', 'ggml-small.bin');
+let whisperBinCache;
+function whisperBin() {
+  if (whisperBinCache !== undefined) return whisperBinCache;
+  try {
+    const out = execSync(IS_WIN ? 'where whisper-cli' : 'which whisper-cli', { encoding: 'utf8' });
+    whisperBinCache = out.split('\n')[0].trim() || null;
+  } catch {
+    whisperBinCache = ['/opt/homebrew/bin/whisper-cli', '/usr/local/bin/whisper-cli']
+      .find(p => fs.existsSync(p)) || null;
+  }
+  return whisperBinCache;
+}
+
+// WAV = cabecera RIFF de 44 bytes + las muestras tal cual (PCM 16-bit LE)
+function pcmToWav(pcm, rate) {
+  const h = Buffer.alloc(44);
+  h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8);
+  h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+  h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([h, pcm]);
+}
+
+function transcribe(pcmB64, cb) {
+  const bin = whisperBin();
+  if (!bin) return cb(null, 'whisper-cli no está instalado (brew install whisper-cpp)');
+  if (!fs.existsSync(WHISPER_MODEL)) return cb(null, `falta el modelo en ${WHISPER_MODEL}`);
+  let pcm;
+  try { pcm = Buffer.from(pcmB64, 'base64'); } catch { return cb(null, 'audio inválido'); }
+  if (!pcm.length) return cb(null, 'audio vacío');
+  if (pcm.length > 16000 * 2 * 300) return cb(null, 'audio demasiado largo (máx 5 min)');
+  const tmp = path.join(require('os').tmpdir(), `cm_voice_${Date.now()}_${Math.floor(Math.random() * 1e6)}.wav`);
+  try { fs.writeFileSync(tmp, pcmToWav(pcm, 16000)); } catch (e) { return cb(null, e.message); }
+  execFile(bin, ['-m', WHISPER_MODEL, '-f', tmp, '-l', 'es', '-np', '-nt'],
+    { timeout: 240000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => {
+      fs.unlink(tmp, () => {});
+      if (err) return cb(null, 'whisper falló: ' + err.message.slice(0, 200));
+      cb((out || '').replace(/\[[^\]]*\]/g, '').trim(), null);
+    });
 }
 
 // Try to auto-detect claude binary path
@@ -246,6 +304,8 @@ function spawnSession(cfg) {
   }
   if (!buffers.has(id)) buffers.set(id, []);
   proc.onData((data) => {
+    const s = sessions.get(id);
+    if (s) s.lastOutAt = Date.now(); // señal de "sigue trabajando" para la voz
     const buf = buffers.get(id);
     if (!buf) return;
     buf.push(data);
@@ -370,6 +430,260 @@ function readClaudeUsage(session) {
 }
 
 const usageProviders = { 'claude-code': readClaudeUsage };
+
+// ── TTS neuronal local (Kokoro + Piper) ───────────────────────
+// Un worker Python persistente (scripts/tts-worker.py, venv aislado en
+// ~/.claudemanager/tts/venv) sintetiza WAVs que el navegador reproduce.
+// Catálogo curado: TODO el español + TODO el inglés de ambos motores; las
+// voces Piper en inglés se descargan bajo demanda la primera vez.
+const TTS_DIR = path.join(DATA_DIR, 'tts');
+const TTS_VENV_PY = path.join(TTS_DIR, 'venv', 'bin', IS_WIN ? 'python.exe' : 'python');
+const TTS_WORKER = path.join(__dirname, 'scripts', 'tts-worker.py');
+const PIPER_DIR = path.join(DATA_DIR, 'voices', 'piper');
+const PIPER_INDEX = path.join(DATA_DIR, 'voices', 'piper-index.json');
+
+function ttsAvailable() {
+  return fs.existsSync(TTS_VENV_PY) && fs.existsSync(TTS_WORKER);
+}
+function kokoroAvailable() {
+  return ttsAvailable() &&
+    fs.existsSync(path.join(TTS_DIR, 'kokoro-v1.0.onnx')) &&
+    fs.existsSync(path.join(TTS_DIR, 'voices-v1.0.bin'));
+}
+
+// Un worker persistente POR MOTOR (JSON por línea, respuestas en orden).
+// Separados a propósito: Kokoro y Piper empaquetan cada uno su propio espeak
+// nativo y compartir proceso los hace chocar (abort al inicializar el 2º).
+const ttsWorkers = {}; // engine -> { proc, buf, pending: Map }
+let ttsReqId = 0;
+
+function ttsWorker(engine) {
+  let w = ttsWorkers[engine];
+  if (w && w.proc) return w;
+  const { spawn } = require('child_process');
+  w = ttsWorkers[engine] = { proc: null, buf: '', pending: new Map(), ...(w || {}) };
+  w.proc = spawn(TTS_VENV_PY, [TTS_WORKER], { stdio: ['pipe', 'pipe', 'pipe'] });
+  w.buf = '';
+  w.proc.stdout.on('data', d => {
+    w.buf += d.toString('utf8');
+    let nl;
+    while ((nl = w.buf.indexOf('\n')) >= 0) {
+      const line = w.buf.slice(0, nl); w.buf = w.buf.slice(nl + 1);
+      let r; try { r = JSON.parse(line); } catch { continue; }
+      const cb = w.pending.get(r.id);
+      if (cb) { w.pending.delete(r.id); cb(r); }
+    }
+  });
+  w.proc.stderr.on('data', d => {
+    const s = d.toString().trim();
+    if (s) console.error(`[tts-${engine}]`, s.slice(0, 300));
+  });
+  w.proc.on('exit', code => {
+    console.error(`[tts-${engine}] terminó (código ${code})`);
+    for (const cb of w.pending.values()) cb({ ok: false, error: 'el worker de voz se cayó' });
+    w.pending.clear(); w.proc = null; w.buf = '';
+  });
+  return w;
+}
+
+function ttsSynth(engine, voice, speaker, text, cb) {
+  if (!ttsAvailable()) return cb({ ok: false, error: 'motores de voz no instalados' });
+  const w = ttsWorker(engine);
+  const id = ++ttsReqId;
+  const timer = setTimeout(() => {
+    if (w.pending.has(id)) { w.pending.delete(id); cb({ ok: false, error: 'timeout de síntesis' }); }
+  }, 120000);
+  w.pending.set(id, r => { clearTimeout(timer); cb(r); });
+  try {
+    w.proc.stdin.write(JSON.stringify({ id, engine, voice, speaker, text }) + '\n');
+  } catch (e) {
+    w.pending.delete(id); clearTimeout(timer);
+    cb({ ok: false, error: 'worker no disponible: ' + e.message });
+  }
+}
+
+// Descarga bajo demanda de una voz Piper (curl sigue las redirecciones de HF)
+const piperDownloads = new Map(); // key -> Promise
+function downloadPiperVoice(entry) {
+  if (piperDownloads.has(entry.key)) return piperDownloads.get(entry.key);
+  const p = new Promise((resolve, reject) => {
+    fs.mkdirSync(PIPER_DIR, { recursive: true });
+    const base = 'https://huggingface.co/rhasspy/piper-voices/resolve/main/';
+    const dl = (url, dest, done) =>
+      execFile('curl', ['-sL', '-o', dest, url], { timeout: 300000 }, err => done(err));
+    dl(base + entry.path + '.onnx', path.join(PIPER_DIR, entry.key + '.onnx'), e1 => {
+      if (e1) return reject(new Error('descarga falló: ' + e1.message));
+      dl(base + entry.path + '.onnx.json', path.join(PIPER_DIR, entry.key + '.onnx.json'), e2 => {
+        if (e2) return reject(new Error('descarga falló: ' + e2.message));
+        resolve();
+      });
+    });
+  }).finally(() => piperDownloads.delete(entry.key));
+  piperDownloads.set(entry.key, p);
+  return p;
+}
+
+// Índice oficial de Piper (nombres, idiomas, hablantes) — cacheado en disco
+let piperIndexCache = null;
+function piperIndex() {
+  if (piperIndexCache) return piperIndexCache;
+  try { piperIndexCache = JSON.parse(fs.readFileSync(PIPER_INDEX, 'utf8')); } catch { piperIndexCache = {}; }
+  return piperIndexCache;
+}
+
+const KOKORO_VOICES = (() => {
+  const es = { ef_dora: 'Dora', em_alex: 'Alex', em_santa: 'Santa' };
+  const enUS = ['af_heart','af_alloy','af_aoede','af_bella','af_jessica','af_kore','af_nicole',
+    'af_nova','af_river','af_sarah','af_sky','am_adam','am_echo','am_eric','am_fenrir',
+    'am_liam','am_michael','am_onyx','am_puck','am_santa'];
+  const enGB = ['bf_alice','bf_emma','bf_isabella','bf_lily','bm_daniel','bm_fable','bm_george','bm_lewis'];
+  const cap = v => v.split('_')[1][0].toUpperCase() + v.split('_')[1].slice(1);
+  const out = [];
+  for (const [v, name] of Object.entries(es))
+    out.push({ id: 'kokoro:' + v, name, lang: 'es', source: 'Kokoro' });
+  for (const v of enUS) out.push({ id: 'kokoro:' + v, name: cap(v), lang: 'en-US', source: 'Kokoro' });
+  for (const v of enGB) out.push({ id: 'kokoro:' + v, name: cap(v), lang: 'en-GB', source: 'Kokoro' });
+  return out;
+})();
+
+const QUALITY_ES = { x_low: 'mínima', low: 'baja', medium: 'media', high: 'alta' };
+function ttsCatalog() {
+  const out = [];
+  if (kokoroAvailable()) out.push(...KOKORO_VOICES);
+  if (ttsAvailable()) {
+    for (const v of Object.values(piperIndex())) {
+      const code = v.language && v.language.code; // es_MX, en_US…
+      if (!code || !/^(es|en)_/.test(code)) continue;
+      const onnx = Object.keys(v.files).find(f => f.endsWith('.onnx'));
+      if (!onnx) continue;
+      const pathNoExt = onnx.slice(0, -5);
+      const downloaded = fs.existsSync(path.join(PIPER_DIR, v.key + '.onnx'));
+      const sizeMb = Math.round(((v.files[onnx] || {}).size_bytes || 0) / 1e6);
+      const quality = QUALITY_ES[v.quality] || v.quality;
+      // Multi-hablante: se expanden solo los modelos chicos (sharvard = 2);
+      // los corpus gigantes (libritts: 900+ hablantes) irían a una sola
+      // entrada — expandirlos inundaría el catálogo con miles de voces.
+      const speakers = v.num_speakers > 1 && v.num_speakers <= 4
+        ? Object.entries(v.speaker_id_map || {})
+        : [[null, null]];
+      for (const [spName, spId] of speakers) {
+        out.push({
+          id: 'piper:' + v.key + (spId !== null && spId !== undefined ? '#' + spId : ''),
+          name: v.name + (spName ? ' ' + spName : '') + ' (' + quality + ')',
+          lang: code.replace('_', '-'),
+          source: 'Piper', key: v.key, path: pathNoExt, downloaded, sizeMb,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+// Cola secuencial de peticiones tts por servidor: preserva el orden de los
+// bloques aunque una voz requiera descargarse primero.
+let ttsChain = Promise.resolve();
+function handleTts(ws, msg) {
+  ttsChain = ttsChain.then(() => new Promise(res => {
+    const m = /^(kokoro|piper):([^#]+)(?:#(\d+))?$/.exec(msg.voice || '');
+    const fail = error => {
+      if (ws.readyState === 1)
+        ws.send(JSON.stringify({ type: 'tts-audio', reqId: msg.reqId, sessionId: msg.sessionId, error }));
+      res();
+    };
+    if (!m) return fail('voz desconocida');
+    const [, engine, voice, speaker] = m;
+    const ready = () => ttsSynth(engine, voice, speaker !== undefined ? +speaker : null, msg.text, r => {
+      if (ws.readyState === 1)
+        ws.send(JSON.stringify({ type: 'tts-audio', reqId: msg.reqId, sessionId: msg.sessionId,
+          wav: r.ok ? r.wav : undefined, error: r.ok ? undefined : r.error }));
+      res();
+    });
+    if (engine === 'piper' && !fs.existsSync(path.join(PIPER_DIR, voice + '.onnx'))) {
+      const entry = ttsCatalog().find(c => c.key === voice);
+      if (!entry) return fail('voz no encontrada en el catálogo');
+      if (ws.readyState === 1)
+        ws.send(JSON.stringify({ type: 'tts-status', msg: `descargando la voz ${entry.name} (~${entry.sizeMb}MB)…` }));
+      downloadPiperVoice(entry).then(ready).catch(e => fail(e.message));
+    } else ready();
+  }));
+}
+
+// ── Lectura incremental de respuestas (voz) ───────────────────
+// Tras dictarle a una sesión, el cliente pide vigilar su transcript: cada
+// 500ms se leen SOLO los bytes nuevos del JSONL y cada bloque de texto del
+// asistente se envía apenas queda escrito — la voz lo lee mientras Claude
+// sigue generando los siguientes. Un vigilante por cliente WS.
+const respWatchers = new Map(); // ws -> watcher
+
+function stopResponseWatch(ws, notify) {
+  const w = respWatchers.get(ws);
+  if (!w) return;
+  clearInterval(w.timer);
+  respWatchers.delete(ws);
+  if (notify && ws.readyState === 1)
+    ws.send(JSON.stringify({ type: 'response-end', sessionId: w.sessionId, blocks: w.blocks }));
+}
+
+function startResponseWatch(ws, sessionId) {
+  stopResponseWatch(ws, false);
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  const w = { sessionId, cwd: s.cwd, file: null, pos: 0, leftover: '',
+              since: Date.now(), started: Date.now(), lastBytes: Date.now(),
+              blocks: 0, promptSeen: false, timer: null };
+  // Arranca al FINAL del archivo actual: solo verá lo que se escriba después
+  // del dictado — imposible releer una respuesta vieja.
+  const initFile = latestTranscript(s.cwd);
+  if (initFile) { try { w.file = initFile; w.pos = fs.statSync(initFile).size; } catch {} }
+  w.timer = setInterval(() => {
+    try {
+      const now = Date.now();
+      // Fin de turno por SEÑALES, no por silencio del archivo (el transcript
+      // no crece mientras Claude piensa o corre herramientas lentas):
+      //  - promptSeen: el mensaje del usuario quedó escrito → el prompt SÍ entró
+      //  - pty quieto: la TUI repinta el spinner todo el tiempo que trabaja;
+      //    4s sin output = terminó de verdad (o nunca empezó)
+      const sess = sessions.get(w.sessionId);
+      const outIdle = sess && sess.lastOutAt ? now - sess.lastOutAt : Infinity;
+      if (now - w.started > 10 * 60 * 1000) return stopResponseWatch(ws, true);          // tope duro
+      if (!w.promptSeen && now - w.started > 15000 && outIdle > 4000)
+        return stopResponseWatch(ws, true);                                              // el prompt nunca entró
+      if (w.promptSeen && now - w.started > 5000 && outIdle > 4000 && now - w.lastBytes > 1500)
+        return stopResponseWatch(ws, true);                                              // turno terminado
+      const file = latestTranscript(w.cwd);
+      if (!file) return;
+      if (file !== w.file) { w.file = file; w.pos = 0; w.leftover = ''; } // rotó el transcript
+      let st; try { st = fs.statSync(file); } catch { return; }
+      if (st.size < w.pos) { w.pos = 0; w.leftover = ''; }
+      if (st.size === w.pos) return;
+      const len = st.size - w.pos;
+      const buf = Buffer.alloc(len);
+      const fd = fs.openSync(file, 'r');
+      try { fs.readSync(fd, buf, 0, len, w.pos); } finally { fs.closeSync(fd); }
+      w.pos = st.size;
+      w.lastBytes = now;
+      const lines = (w.leftover + buf.toString('utf8')).split('\n');
+      w.leftover = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let obj; try { obj = JSON.parse(line); } catch { continue; }
+        if (obj.type === 'user') w.promptSeen = true; // el prompt (o un tool-result) ya está en el transcript
+        // Solo texto del asistente principal — fuera herramientas, pensamiento
+        // interno y subagentes (isSidechain).
+        if (obj.type !== 'assistant' || obj.isSidechain || !obj.message || !Array.isArray(obj.message.content)) continue;
+        const ts = Date.parse(obj.timestamp) || 0;
+        if (ts && ts < w.since - 2000) continue;
+        const text = obj.message.content
+          .filter(c => c.type === 'text' && c.text && c.text.trim())
+          .map(c => c.text).join('\n');
+        if (!text) continue;
+        w.blocks++;
+        if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'response-block', sessionId: w.sessionId, text }));
+      }
+    } catch (err) { console.error('[watch-response]', err.message); }
+  }, 500);
+  respWatchers.set(ws, w);
+}
 
 // ── Git status per session (branch + pending changes, Warp-style) ─
 function gitInfoFor(cwd, cb) {
@@ -611,20 +925,56 @@ if (isConfigured()) {
   }
 }
 
+// Precalentar motores TTS: si algún panel tiene asignada una voz de Kokoro o
+// Piper, se lanza su worker y se fuerza la carga del modelo desde ya — la
+// primera lectura sale sin el arranque en frío (~2-5s). Quien no use voces de
+// motor no paga nada (no se precalienta).
+function prewarmTts() {
+  if (!ttsAvailable()) return;
+  const warmed = new Set();
+  for (const s of (config.sessions || [])) {
+    const m = /^(kokoro|piper):([^#]+)(?:#(\d+))?$/.exec(s.voice || '');
+    if (!m || warmed.has(m[1] + ':' + m[2])) continue;
+    warmed.add(m[1] + ':' + m[2]);
+    // Las Piper aún no descargadas no se bajan en el boot — solo al elegirlas
+    if (m[1] === 'piper' && !fs.existsSync(path.join(PIPER_DIR, m[2] + '.onnx'))) continue;
+    ttsSynth(m[1], m[2], m[3] !== undefined ? +m[3] : null, 'ok', r => {
+      console.log(`[tts] precalentado ${m[1]}:${m[2]}${r.ok ? '' : ' — falló: ' + r.error}`);
+    });
+  }
+}
+setTimeout(prewarmTts, 1500); // tras el arranque, sin estorbarlo
+
 // HTTP server
 let indexCache = null; // in-memory copy of index.html, invalidated by fs.watch below
 const server = http.createServer((req, res) => {
   if (req.url === '/' || req.url === '/index.html') {
+    // no-cache: sin esto el navegador puede recargar con un index.html viejo
+    // de su caché heurística y "no enterarse" de los cambios del cliente.
+    const HDRS = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' };
     if (indexCache) {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.writeHead(200, HDRS);
       return res.end(indexCache);
     }
     fs.readFile(path.join(__dirname, 'public', 'index.html'), (err, data) => {
       if (err) { res.writeHead(500); return res.end('Error'); }
       indexCache = data;
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.writeHead(200, HDRS);
       res.end(data);
     });
+  } else if (req.url.startsWith('/ptt/')) {
+    // Disparador global de dictado: un atajo del SO (Shortcuts/AutoHotkey/
+    // atajos de GNOME…) hace curl aquí y el dashboard —tenga o no el foco—
+    // arranca o detiene la grabación. Se avisa solo a la pestaña más
+    // reciente para no grabar por duplicado si hay varias abiertas.
+    const action = req.url.slice(5).split('?')[0];
+    if (!['start', 'stop', 'toggle'].includes(action)) { res.writeHead(404); return res.end('Not found'); }
+    let target = null;
+    for (const c of clients) if (c.readyState === 1) target = c;
+    if (target) target.send(JSON.stringify({ type: 'ptt', action }));
+    console.log(`[ptt] ${action} → ${target ? 'entregado al navegador' : 'SIN navegador conectado'}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: !!target, browsers: target ? 1 : 0 }));
   } else if (req.url.startsWith('/fondos/')) {
     const file = decodeURIComponent(req.url.slice('/fondos/'.length).split('?')[0]);
     const ext = path.extname(file).toLowerCase();
@@ -668,6 +1018,7 @@ wss.on('connection', (ws) => {
   }));
 
   if (commands.length) ws.send(JSON.stringify({ type: 'cmd-log', commands }));
+  ws.send(JSON.stringify({ type: 'tts-catalog', voices: ttsCatalog() }));
 
   ws.on('message', (raw) => {
     let msg;
@@ -677,7 +1028,7 @@ wss.on('connection', (ws) => {
     if (type === 'list') {
       const list = [];
       for (const [id, s] of sessions)
-        list.push({ id, name: s.name, cwd: s.cwd, status: s.status, cols: s.cols || 80, rows: s.rows || 24, subtitle: s.subtitle || '' });
+        list.push({ id, name: s.name, cwd: s.cwd, status: s.status, cols: s.cols || 80, rows: s.rows || 24, subtitle: s.subtitle || '', voice: s.voice || '' });
       ws.send(JSON.stringify({ type: 'sessions', sessions: list }));
       for (const [id, buf] of buffers)
         if (buf.length) ws.send(JSON.stringify({ type: 'output', sessionId: id, data: buf.join('') }));
@@ -882,6 +1233,67 @@ wss.on('connection', (ws) => {
       scheduleCmdSave();
       scheduleCmdBroadcast();
 
+    } else if (type === 'watch-response') {
+      startResponseWatch(ws, sessionId);
+
+    } else if (type === 'stop-watch') {
+      stopResponseWatch(ws, false);
+
+    } else if (type === 'voice-audio') {
+      transcribe(msg.audio, (text, error) => {
+        if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'voice-text', text, error }));
+      });
+
+    } else if (type === 'voice-partial') {
+      // Dictado incremental: tramos transcritos EN PARALELO a la grabación —
+      // al soltar solo falta la colita y el resultado sale casi al instante.
+      let d = dictations.get(ws);
+      if (!d) { d = new Map(); dictations.set(ws, d); }
+      d.set(msg.seq | 0, transcribeP(msg.audio));
+
+    } else if (type === 'voice-final') {
+      const d = dictations.get(ws) || new Map();
+      dictations.delete(ws);
+      d.set(msg.seq | 0, transcribeP(msg.audio));
+      const seqs = [...d.keys()].sort((a, b) => a - b);
+      Promise.all(seqs.map(s => d.get(s))).then(results => {
+        if (ws.readyState !== 1) return;
+        const errs = results.filter(r => r.error).map(r => r.error);
+        const text = results.map(r => (r.text || '').trim()).filter(Boolean).join(' ');
+        if (!text && errs.length) ws.send(JSON.stringify({ type: 'voice-text', text: null, error: errs[0] }));
+        else ws.send(JSON.stringify({ type: 'voice-text', text, error: null }));
+      });
+
+    } else if (type === 'tts') {
+      handleTts(ws, msg);
+
+    } else if (type === 'tts-catalog') {
+      ws.send(JSON.stringify({ type: 'tts-catalog', voices: ttsCatalog() }));
+
+    } else if (type === 'save-voice') {
+      // Voz TTS elegida para el panel ('' = sin voz, la lee el usuario)
+      const s = sessions.get(sessionId);
+      if (s) s.voice = msg.voice || '';
+      const saved = (config.sessions || []).find(c => c.id === sessionId);
+      if (saved) { saved.voice = msg.voice || ''; saveConfig(); }
+      broadcast({ type: 'voice-saved', sessionId, voice: msg.voice || '' });
+
+    } else if (type === 'read-file') {
+      // Contenido completo de un archivo del repo — para la vista markdown
+      // renderizada del git drawer. Misma protección de rutas que git-diff.
+      const s = sessions.get(sessionId);
+      if (!s || typeof msg.file !== 'string') return;
+      const file = msg.file.includes(' -> ') ? msg.file.split(' -> ').pop() : msg.file;
+      const full = path.resolve(s.cwd, file);
+      if (full !== path.resolve(s.cwd) && !full.startsWith(path.resolve(s.cwd) + path.sep)) return;
+      fs.readFile(full, (err, buf) => {
+        if (ws.readyState !== 1) return;
+        const MAX = 1024 * 1024;
+        const content = err ? null :
+          (buf.length > MAX ? buf.toString('utf8', 0, MAX) + '\n\n… (archivo truncado a 1MB)' : buf.toString('utf8'));
+        ws.send(JSON.stringify({ type: 'file-content', sessionId, file: msg.file, content, error: err ? err.message : null }));
+      });
+
     } else if (type === 'save-subtitle') {
       const s = sessions.get(sessionId);
       if (s) s.subtitle = msg.subtitle;
@@ -890,8 +1302,8 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => clients.delete(ws));
-  ws.on('error', () => clients.delete(ws));
+  ws.on('close', () => { clients.delete(ws); stopResponseWatch(ws, false); dictations.delete(ws); });
+  ws.on('error', () => { clients.delete(ws); stopResponseWatch(ws, false); dictations.delete(ws); });
 });
 
 server.listen(PORT, () => {
