@@ -247,6 +247,19 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   padding:8px 16px;font-size:12px;max-width:70vw;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;box-shadow:0 0 18px rgba(0,245,255,.2)}
 .ph-voice.on{color:var(--cyan);border-color:rgba(0,245,255,.6);text-shadow:0 0 6px rgba(0,245,255,.4)}
+/* Rescate de dictados sin destino: persiste hasta que elijas consola o canceles */
+#voice-pick{position:fixed;bottom:44px;left:50%;transform:translateX(-50%);z-index:905;
+  background:rgba(4,7,18,.97);border:1px solid rgba(255,214,10,.55);max-width:72vw;min-width:340px;
+  padding:10px 14px;box-shadow:0 4px 24px rgba(0,0,0,.6),0 0 18px rgba(255,214,10,.15);font-size:12px}
+.vp-txt{color:#e8f4ff;margin-bottom:6px;line-height:1.5;max-height:64px;overflow-y:auto}
+.vp-q{color:var(--yellow);font-size:10px;margin-bottom:8px}
+.vp-btns{display:flex;flex-wrap:wrap;gap:6px}
+.vp-btn{background:rgba(0,245,255,.08);border:1px solid rgba(0,245,255,.4);color:var(--cyan);
+  font-family:inherit;font-size:11px;padding:4px 10px;cursor:pointer}
+.vp-btn:hover{border-color:var(--cyan);box-shadow:0 0 8px rgba(0,245,255,.3)}
+.vp-btn .vp-sys{color:rgba(160,180,200,.45);font-size:9px;margin-left:5px}
+.vp-cancel{border-color:rgba(255,0,110,.45);color:var(--pink);background:rgba(255,0,110,.06)}
+.vp-cancel:hover{border-color:var(--pink);box-shadow:0 0 8px rgba(255,0,110,.3)}
 #voice-menu{position:fixed;z-index:950;width:270px;max-height:320px;overflow-y:auto;
   background:#07071a;border:1px solid rgba(0,245,255,.4);box-shadow:0 8px 24px rgba(0,0,0,.6);font-size:11px}
 #voice-menu::-webkit-scrollbar{width:4px}
@@ -434,6 +447,7 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
   <button id="sb-refresh" title="Actualizar consumo ahora">⟳</button>
 </div>
 <div id="voice-toast" style="display:none"></div>
+<div id="voice-pick" style="display:none"></div>
 
 <!-- Git drawer: pending changes + diff for one session -->
 <div id="git-drawer">
@@ -1264,13 +1278,32 @@ function micFlushPartial() {
   recSentAny = true;
 }
 
+// Lista de micrófonos disponibles (para fijar uno en el menú del 🎙).
+// Los nombres solo aparecen después de conceder el permiso de mic.
+let micDevices = [];
+async function refreshMicDevices() {
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    micDevices = all.filter(d => d.kind === 'audioinput' && d.deviceId && d.deviceId !== 'default');
+  } catch { micDevices = []; }
+}
+
 async function micStart() {
   if (recording) return;
   try {
     if (!micStream) {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true },
-      });
+      // Mic fijado por el usuario, o el del sistema si no hay/está desconectado
+      const micId = localStorage.getItem('claudemgr-mic-device') || '';
+      const base = { echoCancellation: true, noiseSuppression: true };
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: micId ? { ...base, deviceId: { exact: micId } } : base,
+        });
+      } catch (err) {
+        if (!micId) throw err;
+        vToast('el micrófono fijado no está disponible — usando el del sistema', 4000);
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: base });
+      }
       micCtx = new AudioContext();
       const src = micCtx.createMediaStreamSource(micStream);
       const node = micCtx.createScriptProcessor(4096, 1, 1);
@@ -1348,10 +1381,19 @@ function renderMicMenu(m) {
   const counts = {};
   for (const v of allVoicesMerged()) { const b = baseLang(v.lang); if (b) counts[b] = (counts[b] || 0) + 1; }
   const langs = Object.keys(counts).sort((a, b) => (b === 'es') - (a === 'es') || a.localeCompare(b));
+  const micSel = localStorage.getItem('claudemgr-mic-device') || '';
+  const micKnown = micDevices.some(d => d.deviceId === micSel);
   m.innerHTML =
     `<div class="vm-hdr">DICTADO</div>` +
     `<div class="vm-item" data-a="key">🎹 Cambiar tecla (actual: ${escHtml(pttLabel)})</div>` +
     `<div class="vm-item" data-a="win">⏱ Panel activo: ${win > 0 ? win + ' min' : 'desactivado'}</div>` +
+    `<div class="vm-hdr">MICRÓFONO</div>` +
+    `<div class="vm-item vm-mic" data-d="">${micSel === '' ? '◉' : '○'} Automático (el del sistema)</div>` +
+    micDevices.map(d =>
+      `<div class="vm-item vm-mic" data-d="${escHtml(d.deviceId)}">${micSel === d.deviceId ? '◉' : '○'} ${escHtml(d.label || 'Micrófono sin nombre')}</div>`
+    ).join('') +
+    (micSel && !micKnown ? '<div class="vm-hdr">el mic fijado no está conectado — se usa el del sistema</div>' : '') +
+    (!micDevices.length ? '<div class="vm-hdr">usa el dictado una vez para ver los nombres de tus mics</div>' : '') +
     `<div class="vm-hdr">IDIOMAS DE VOCES — marca uno o varios (ninguno = todos)</div>` +
     langs.map(l =>
       `<div class="vm-item vm-lang" data-l="${l}">${sel.includes(l) ? '☑' : '☐'} ${escHtml(langLabel(l))} <span class="vm-src">${counts[l]}</span></div>`
@@ -1367,6 +1409,8 @@ sbMic.addEventListener('contextmenu', e => {
   m.style.left = Math.max(4, Math.min(r.left - 120, innerWidth - 290)) + 'px';
   m.style.bottom = (innerHeight - r.top + 6) + 'px';
   renderMicMenu(m);
+  // Los nombres de los mics llegan async — repinta cuando estén
+  refreshMicDevices().then(() => { if (document.getElementById('voice-menu') === m) renderMicMenu(m); });
   m.addEventListener('click', ev => {
     const lang = ev.target.closest('.vm-lang');
     if (lang) { // toggle de idioma — el menú se queda abierto y se repinta
@@ -1376,6 +1420,14 @@ sbMic.addEventListener('contextmenu', e => {
       if (i >= 0) sel.splice(i, 1); else sel.push(l);
       localStorage.setItem('claudemgr-voice-langs', JSON.stringify(sel));
       renderMicMenu(m);
+      return;
+    }
+    const mic = ev.target.closest('.vm-mic');
+    if (mic) { // fija (o libera) el micrófono — aplica desde el siguiente dictado
+      localStorage.setItem('claudemgr-mic-device', mic.dataset.d);
+      micTeardown();
+      renderMicMenu(m);
+      vToast(mic.dataset.d ? '✓ micrófono fijado' : '✓ micrófono automático (el del sistema)');
       return;
     }
     const it = ev.target.closest('.vm-item');
@@ -1436,10 +1488,45 @@ document.addEventListener('keyup', e => {
   if (e.code === pttCode) { e.preventDefault(); e.stopPropagation(); micStop(); }
 }, true);
 
+// Rescate de dictados sin destino: el mensaje NO se pierde — se muestra con
+// botones de las consolas visibles para mandarlo con un clic, y persiste
+// hasta que elijas o canceles (Esc también cancela).
+const voicePickEl = document.getElementById('voice-pick');
+let voicePickText = null;
+
+function showVoicePick(text) {
+  voicePickText = text;
+  const panels = [...canvas.querySelectorAll('.panel')].filter(p => !p.dataset.hidden).map(p => ({
+    id: p.dataset.id,
+    sys: p.querySelector('.ph-id')?.textContent.trim() || '',
+    nm: p.querySelector('.ph-sub')?.textContent.trim() || p.querySelector('.ph-name')?.textContent.trim() || '?',
+  }));
+  voicePickEl.innerHTML =
+    `<div class="vp-txt">🎙 «${escHtml(text.length > 220 ? text.slice(0, 220) + '…' : text)}»</div>` +
+    `<div class="vp-q">No reconocí el nombre de la consola — ¿a cuál lo mando?</div>` +
+    '<div class="vp-btns">' +
+    panels.map(p =>
+      `<button class="vp-btn" data-id="${p.id}" data-nm="${escHtml(p.nm)}">${escHtml(p.nm)}<span class="vp-sys">${escHtml(p.sys)}</span></button>`
+    ).join('') +
+    '<button class="vp-btn vp-cancel">✕ Cancelar</button></div>';
+  voicePickEl.style.display = 'block';
+}
+function hideVoicePick() { voicePickEl.style.display = 'none'; voicePickText = null; }
+
+voicePickEl.addEventListener('click', e => {
+  const b = e.target.closest('.vp-btn');
+  if (!b) return;
+  if (b.classList.contains('vp-cancel')) { hideVoicePick(); vToast('envío cancelado ✕'); return; }
+  const text = voicePickText;
+  hideVoicePick();
+  if (text) sendVoicePrompt(b.dataset.id, b.dataset.nm, text);
+});
+
 // Cancela lo que esté vivo del flujo de voz; true si había algo que cancelar
 function voiceCancel() {
   let did = false;
   if (voicePendingSend) { clearTimeout(voicePendingSend.timer); voicePendingSend = null; vToast('cancelado ✕'); did = true; }
+  if (voicePickText !== null) { hideVoicePick(); vToast('envío cancelado ✕'); did = true; }
   if (window.speechSynthesis && speechSynthesis.speaking) { speechSynthesis.cancel(); did = true; }
   for (const id of Object.keys(ttsPlay)) {
     if (ttsPlay[id].audio || ttsPlay[id].queue.length) { stopEngineSpeech(id); did = true; }
@@ -1522,7 +1609,10 @@ function routeVoiceText(raw) {
       vToast(`→ ${voiceActive.nm} (continúa): ${prompt}   (Esc cancela)`, 0);
       return;
     }
-    vToast(`¿a qué consola? no reconocí el nombre en: «${text}»`, 5000);
+    // El mensaje no se pierde: rescate persistente para elegir destino a mano
+    const orphan = words.join(' ').replace(/^[\s,.:;¿?¡!—-]+/, '').trim();
+    if (orphan) showVoicePick(orphan);
+    else vToast('no se entendió nada');
     return;
   }
 
@@ -1990,11 +2080,13 @@ function buildPanel(s, lay) {
       return;
     }
 
-    // 2) Dropped files AND folders (Finder etc.) → upload, server replies
-    //    with temp paths. Entries must be captured synchronously here.
+    // 2) Dropped files AND folders (Finder etc.): el navegador oculta la ruta
+    //    original, pero el servidor puede ENCONTRARLA (Spotlight + verificación
+    //    por tamaño/hijos) y pegar la ruta real. Solo lo que no se resuelve se
+    //    sube como copia temporal. Entries must be captured synchronously here.
     const entries = Array.from(e.dataTransfer.items || [])
       .map(it => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
-    if (entries.length) { uploadDroppedEntries(entries, s.id); return; }
+    if (entries.length) { smartDrop(entries, s.id, term); return; }
 
     // Fallback for browsers without webkitGetAsEntry (files only)
     const files = Array.from(e.dataTransfer.files || []);
@@ -2024,6 +2116,39 @@ function buildPanel(s, lay) {
 
 // Escape shell-special characters the way native terminals do when a file is dropped
 function shEscape(p) { return p.replace(/[^\w\/.\-]/g, c => '\\' + c); }
+
+// ── Drop inteligente: primero busca la ruta REAL, luego copia ─
+let dropReqSeq = 0;
+const dropPending = new Map(); // reqId -> resolve(paths)
+
+async function smartDrop(entries, sid, term) {
+  // Junta lo que el navegador sí revela: nombre + tamaño (archivos) o nombre
+  // + primeros hijos (carpetas) — suficiente para buscar el original en disco.
+  const metas = await Promise.all(entries.map(en => new Promise(res => {
+    try {
+      if (en.isFile) en.file(f => res({ name: en.name, size: f.size, isDir: false }), () => res(null));
+      else en.createReader().readEntries(
+        kids => res({ name: en.name, isDir: true, childNames: kids.slice(0, 6).map(k => k.name) }),
+        () => res({ name: en.name, isDir: true, childNames: [] }));
+    } catch { res(null); }
+  })));
+  const reqId = 'dr' + (++dropReqSeq);
+  const paths = await new Promise(res => {
+    const t = setTimeout(() => { dropPending.delete(reqId); res(null); }, 4500);
+    dropPending.set(reqId, p => { clearTimeout(t); res(p); });
+    ws.send(JSON.stringify({ type: 'resolve-drop', reqId, sessionId: sid, items: metas.map(m => m || {}) }));
+  });
+  const found = [], leftover = [];
+  entries.forEach((en, i) => {
+    if (paths && paths[i]) found.push(paths[i]);
+    else leftover.push(en);
+  });
+  if (found.length) term.paste(found.map(shEscape).join(' ') + (leftover.length ? ' ' : ''));
+  if (leftover.length) {
+    vToast('no encontré la ruta original de ' + leftover.length + ' elemento(s) — se sube copia temporal', 4000);
+    uploadDroppedEntries(leftover, sid); // plan B: copia temporal, como antes
+  }
+}
 
 // Paste from the async clipboard API (Ctrl+V path): image wins — it goes to
 // the server like paste-image and the temp path is pasted; otherwise text.
@@ -2865,6 +2990,10 @@ ws.addEventListener('message', ev => {
   } else if (msg.type === 'image-pasted') {
     const t = terms[msg.sessionId];
     if (t) t.paste(msg.path);
+
+  } else if (msg.type === 'drop-resolved') {
+    const cb = dropPending.get(msg.reqId);
+    if (cb) { dropPending.delete(msg.reqId); cb(msg.paths); }
 
   } else if (msg.type === 'files-dropped') {
     const t = terms[msg.sessionId];

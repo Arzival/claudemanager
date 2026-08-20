@@ -685,6 +685,53 @@ function startResponseWatch(ws, sessionId) {
   respWatchers.set(ws, w);
 }
 
+// ── Resolución de rutas de archivos arrastrados ───────────────
+// El navegador nunca revela la ruta original de lo que arrastras (seguridad
+// web), pero sí el nombre, tamaño y contenido. Como el servidor corre en la
+// misma máquina, busca el original con Spotlight (mdfind, indexado) y solo
+// acepta una coincidencia ÚNICA verificada (tamaño exacto en archivos, hijos
+// presentes en carpetas). Si es ambigua o no aparece → null y el cliente cae
+// a la copia temporal de siempre.
+function resolveDropItem(item, cb) {
+  const name = String(item.name || '');
+  if (!name || /[\/\\]/.test(name)) return cb(null);
+  const finish = candidates => {
+    const matches = [];
+    for (const p of candidates) {
+      try {
+        if (path.basename(p) !== name) continue;
+        const st = fs.statSync(p);
+        if (item.isDir) {
+          if (!st.isDirectory()) continue;
+          const need = (item.childNames || []).slice(0, 6);
+          if (need.length) {
+            const have = new Set(fs.readdirSync(p));
+            if (!need.every(k => have.has(k))) continue;
+          }
+        } else {
+          if (!st.isFile()) continue;
+          if (typeof item.size === 'number' && st.size !== item.size) continue;
+        }
+        matches.push(p);
+        if (matches.length > 1) break; // ambigua — mejor no adivinar
+      } catch {}
+    }
+    cb(matches.length === 1 ? matches[0] : null);
+  };
+  if (process.platform === 'darwin') {
+    execFile('mdfind', ['-name', name], { timeout: 3000, maxBuffer: 4 * 1024 * 1024 },
+      (err, out) => finish(err || !out ? [] : out.split('\n').filter(Boolean)));
+  } else if (!IS_WIN) {
+    const home = process.env.HOME || '';
+    const roots = [config.projectsRoot, path.join(home, 'Desktop'), path.join(home, 'Downloads'),
+      path.join(home, 'Documents')].filter(r => r && fs.existsSync(r));
+    if (!roots.length) return cb(null);
+    execFile('find', [...roots, '-maxdepth', '6', '-name', name],
+      { timeout: 4000, maxBuffer: 4 * 1024 * 1024 },
+      (err, out) => finish(out ? out.split('\n').filter(Boolean) : []));
+  } else cb(null); // Windows: sin búsqueda — sigue el flujo de copia temporal
+}
+
 // ── Git status per session (branch + pending changes, Warp-style) ─
 function gitInfoFor(cwd, cb) {
   execFile('git', ['status', '--porcelain=v1', '--branch'], { cwd, timeout: 4000 }, (err, out) => {
@@ -1109,6 +1156,21 @@ wss.on('connection', (ws) => {
         fs.writeFileSync(tmpPath, Buffer.from(m[2], 'base64'));
         ws.send(JSON.stringify({ type:'image-pasted', sessionId:msg.sessionId, path:tmpPath }));
       } catch(err) { console.error('[paste-image]', err.message); }
+
+    } else if (type === 'resolve-drop') {
+      // ¿Dónde vive de verdad lo que arrastraron? (ver resolveDropItem)
+      const items = Array.isArray(msg.items) ? msg.items.slice(0, 25) : [];
+      const paths = new Array(items.length).fill(null);
+      let left = items.length;
+      const reply = () => {
+        if (ws.readyState === 1)
+          ws.send(JSON.stringify({ type: 'drop-resolved', sessionId, reqId: msg.reqId, paths }));
+      };
+      if (!left) return reply();
+      items.forEach((it, i) => resolveDropItem(it || {}, p => {
+        paths[i] = p;
+        if (--left === 0) reply();
+      }));
 
     } else if (type === 'drop-files') {
       // Files/folders dragged onto a terminal. The browser can't reveal the
