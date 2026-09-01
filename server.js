@@ -1009,6 +1009,20 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, HDRS);
       res.end(data);
     });
+  } else if (/^\/(js|css)\//.test(req.url)) {
+    // Módulos del cliente (public/js, public/css) — no-cache igual que el
+    // index para que las recargas siempre traigan la versión del disco.
+    const rel = decodeURIComponent(req.url.split('?')[0]);
+    const full = path.join(__dirname, 'public', rel);
+    const pubDir = path.join(__dirname, 'public');
+    const MIME = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+    const mime = MIME[path.extname(full).toLowerCase()];
+    if (!full.startsWith(pubDir + path.sep) || !mime) { res.writeHead(404); return res.end('Not found'); }
+    fs.readFile(full, (err, data) => {
+      if (err) { res.writeHead(404); return res.end('Not found'); }
+      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-cache' });
+      res.end(data);
+    });
   } else if (req.url.startsWith('/ptt/')) {
     // Disparador global de dictado: un atajo del SO (Shortcuts/AutoHotkey/
     // atajos de GNOME…) hace curl aquí y el dashboard —tenga o no el foco—
@@ -1376,9 +1390,10 @@ server.listen(PORT, () => {
 let reloadTimer;
 // Watch the directory, not the file: editors replace files via rename, which
 // kills a file-level watcher after the first save (stale cache + no reload).
-fs.watch(path.join(__dirname, 'public'), (ev, filename) => {
-  if (filename && filename !== 'index.html') return;
-  indexCache = null;
+// Recursive: el cliente vive repartido en public/js y public/css.
+fs.watch(path.join(__dirname, 'public'), { recursive: true }, (ev, filename) => {
+  if (filename && !/\.(html|js|css)$/.test(filename)) return;
+  if (!filename || filename.endsWith('index.html')) indexCache = null;
   clearTimeout(reloadTimer);
   reloadTimer = setTimeout(() => broadcast({ type: 'reload' }), 120);
 });
