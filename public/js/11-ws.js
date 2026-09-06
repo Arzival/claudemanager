@@ -13,6 +13,7 @@ ws.addEventListener('message', ev => {
     toolsList = msg.tools || [];
     selectedToolId = msg.defaultTool || toolsList[0]?.id || null;
     renderToolPills();
+    document.getElementById('cfg-update').value = msg.updateCommand || '';
     if (!msg.configured) openConfig(msg);
     ws.send(JSON.stringify({ type:'list' }));
 
@@ -233,6 +234,7 @@ ws.addEventListener('message', ev => {
 
   } else if (msg.type === 'cmd-log') {
     cmdLog = msg.commands || [];
+    cmdsOnLogUpdate(); // repinta el gestor de comandos si está abierto
     // Repinta las cajas abiertas (p.ej. tras borrar un comando con clic derecho)
     document.querySelectorAll('.cmdbox.open').forEach(el => renderCmdBox(el.id.slice(3)));
 
@@ -254,6 +256,15 @@ ws.addEventListener('message', ev => {
   } else if (msg.type === 'backgrounds') {
     backgrounds = msg.files || [];
     if (bgOv.classList.contains('open')) renderBgGrid();
+
+  } else if (msg.type === 'cmd-cleared') {
+    vToast(`🧹 ${msg.removed} comando(s) de un solo uso borrados`);
+
+  } else if (msg.type === 'update-result') {
+    vToast(msg.ok ? `✓ actualización al arrancar: ${msg.msg}` : `⚠ la actualización falló: ${msg.msg}`, 8000);
+
+  } else if (msg.type === 'restarting') {
+    vToast('⟳ el servicio se está reiniciando — la página volverá sola…', 0);
 
   } else if (msg.type === 'reload') {
     location.reload();

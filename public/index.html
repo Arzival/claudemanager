@@ -17,7 +17,9 @@
     <div class="hitem"><span class="hlabel">NET</span><span id="conn">◉ OFFLINE</span></div>
     <div class="hitem"><span id="clock"></span></div>
     <button class="hbtn" id="btn-open">＋ OPEN PROJECT</button>
+    <button class="hbtn" id="btn-cmds" title="Historial de comandos: buscar, editar y borrar">⌨ CMDS</button>
     <button class="hbtn y" id="btn-cfg">⚙ CONFIG</button>
+    <button class="hbtn r" id="btn-restart" title="Reinicia el servicio completo (las sesiones se relanzan y pierden su pantalla)">⟳</button>
   </div>
 </header>
 <div id="ws-bar">
@@ -46,6 +48,21 @@
   <span id="sb-voice-win" style="display:none" title="Panel activo de voz — los dictados sin nombre van aquí hasta que corra el tiempo"></span>
   <button id="sb-mic" title="Mantén presionado para dictar (o mantén F9): «nombre, tu mensaje»">🎙</button>
   <button id="sb-refresh" title="Actualizar consumo ahora">⟳</button>
+</div>
+<!-- Gestor del historial de comandos -->
+<div class="mo" id="cmds-overlay">
+  <div class="mbox" id="cmds-modal">
+    <div class="mhdr">
+      <span class="mhdr-t">⌨ HISTORIAL DE COMANDOS</span>
+      <button class="mcls" id="cmds-close">✕</button>
+    </div>
+    <div id="cmds-bar">
+      <input class="cfg-i" id="cmds-search" placeholder="buscar…">
+      <button class="ws-btn" id="cmds-purge" title="Borra todos los comandos usados una sola vez">🧹 borrar los de 1 uso</button>
+      <span id="cmds-count"></span>
+    </div>
+    <ul id="cmds-list"></ul>
+  </div>
 </div>
 <div id="voice-toast" style="display:none"></div>
 <div id="voice-pick" style="display:none"></div>
@@ -127,6 +144,12 @@
         <label class="cfg-l">Projects Root Directory</label>
         <input class="cfg-i" id="cfg-root" placeholder="/Users/yourname/Documents/Projects">
         <span class="cfg-h">Carpeta con tus subcarpetas por tecnología (React/, Node/, etc.)</span>
+      </div>
+      <!-- Update command -->
+      <div class="cfg-f">
+        <label class="cfg-l">Comando de actualización (opcional)</label>
+        <input class="cfg-i" id="cfg-update" placeholder="brew upgrade  ·  npm update -g @anthropic-ai/claude-code  ·  …">
+        <span class="cfg-h">Se ejecuta en cada arranque/reinicio del servicio, en segundo plano. Vacío = desactivado. Usa el comando de TU sistema e instalación.</span>
       </div>
       <!-- Tools list -->
       <div class="cfg-f">
@@ -226,5 +249,6 @@
 <script src="js/10-consumo.js"></script>
 <script src="js/11-ws.js"></script>
 <script src="js/12-spawn.js"></script>
+<script src="js/13-admin.js"></script>
 </body>
 </html>

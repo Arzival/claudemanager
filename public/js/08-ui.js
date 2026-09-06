@@ -79,6 +79,7 @@ clockEl.textContent = new Date().toLocaleTimeString('en-US',{hour12:false});
 function openConfig(d) {
   document.getElementById('cfg-root').value = d.projectsRoot||'';
   document.getElementById('cfg-claude').value = d.claudePath||d.detectedClaude||'';
+  if (d.updateCommand !== undefined) document.getElementById('cfg-update').value = d.updateCommand;
   renderToolsList();
   closeToolForm();
   cfgOv.classList.add('open');
@@ -94,8 +95,9 @@ document.getElementById('cfg-detect').addEventListener('click', () => {
 });
 document.getElementById('cfg-save').addEventListener('click', () =>
   ws.send(JSON.stringify({ type:'save-config',
-    projectsRoot: document.getElementById('cfg-root').value.trim(),
-    claudePath:   document.getElementById('cfg-claude').value.trim() })));
+    projectsRoot:  document.getElementById('cfg-root').value.trim(),
+    claudePath:    document.getElementById('cfg-claude').value.trim(),
+    updateCommand: document.getElementById('cfg-update').value.trim() })));
 
 // ── Project picker ────────────────────────────────────────────
 document.getElementById('btn-open').addEventListener('click', () => {

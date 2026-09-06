@@ -992,6 +992,25 @@ function prewarmTts() {
 }
 setTimeout(prewarmTts, 1500); // tras el arranque, sin estorbarlo
 
+// ── Actualización al arrancar ─────────────────────────────────
+// Si hay un comando configurado (brew upgrade…, npm update -g…, cada quien
+// el suyo según su SO e instalación), corre en CADA arranque/reinicio del
+// servicio, en segundo plano y sin bloquear nada. El resultado se guarda y
+// se avisa en el dashboard al conectar.
+let updateResult = null; // { ok, msg, at }
+if ((config.updateCommand || '').trim()) {
+  const cmd = config.updateCommand.trim();
+  console.log('[update] ejecutando:', cmd);
+  require('child_process').exec(cmd, { timeout: 10 * 60 * 1000, maxBuffer: 4 * 1024 * 1024 }, (err, out, errOut) => {
+    const tail = s => String(s || '').trim().split('\n').slice(-3).join(' · ').slice(0, 300);
+    updateResult = err
+      ? { ok: false, msg: tail(errOut) || err.message.slice(0, 200), at: Date.now() }
+      : { ok: true, msg: tail(out) || 'sin novedades', at: Date.now() };
+    console.log(`[update] ${err ? 'FALLÓ' : 'ok'} — ${updateResult.msg}`);
+    broadcast({ type: 'update-result', ...updateResult });
+  });
+}
+
 // HTTP server
 let indexCache = null; // in-memory copy of index.html, invalidated by fs.watch below
 const server = http.createServer((req, res) => {
@@ -1073,6 +1092,7 @@ wss.on('connection', (ws) => {
     projectsRoot: config.projectsRoot || '',
     claudePath: config.claudePath || '',
     detectedClaude: detectClaude(),
+    updateCommand: config.updateCommand || '',
     tools: config.tools || [],
     defaultTool: config.defaultTool || 'claude',
     backgrounds: listBackgrounds(),
@@ -1080,6 +1100,7 @@ wss.on('connection', (ws) => {
 
   if (commands.length) ws.send(JSON.stringify({ type: 'cmd-log', commands }));
   ws.send(JSON.stringify({ type: 'tts-catalog', voices: ttsCatalog() }));
+  if (updateResult) ws.send(JSON.stringify({ type: 'update-result', ...updateResult }));
 
   ws.on('message', (raw) => {
     let msg;
@@ -1097,6 +1118,7 @@ wss.on('connection', (ws) => {
     } else if (type === 'save-config') {
       config.projectsRoot = msg.projectsRoot.trim();
       config.claudePath = msg.claudePath.trim();
+      if (typeof msg.updateCommand === 'string') config.updateCommand = msg.updateCommand.trim();
       saveConfig();
       broadcast({ type: 'reload' });
 
@@ -1308,6 +1330,40 @@ wss.on('connection', (ws) => {
       commands = commands.filter(c => c.cmd !== msg.cmd);
       scheduleCmdSave();
       scheduleCmdBroadcast();
+
+    } else if (type === 'cmd-edit') {
+      // Renombrar un comando del historial; si el nombre nuevo ya existe,
+      // se fusionan (suma de usos, fecha más reciente).
+      const from = commands.find(c => c.cmd === msg.old);
+      const to = (msg.new || '').trim();
+      if (!from || !to || to === msg.old) return;
+      const dup = commands.find(c => c.cmd === to);
+      if (dup) {
+        dup.count += from.count;
+        dup.last = Math.max(dup.last, from.last);
+        commands = commands.filter(c => c !== from);
+      } else {
+        from.cmd = to;
+      }
+      scheduleCmdSave();
+      scheduleCmdBroadcast();
+
+    } else if (type === 'cmd-clear-singles') {
+      // Limpieza de basura: fuera todos los comandos usados una sola vez
+      const before = commands.length;
+      commands = commands.filter(c => c.count > 1);
+      scheduleCmdSave();
+      scheduleCmdBroadcast();
+      ws.send(JSON.stringify({ type: 'cmd-cleared', removed: before - commands.length }));
+
+    } else if (type === 'restart-service') {
+      // El supervisor (launchd/systemd/Task Scheduler) revive el proceso al
+      // salir — mismo mecanismo que un reinicio manual. Sin supervisor, el
+      // servicio queda apagado (advertido en el botón).
+      console.log('[restart] solicitado desde el dashboard — saliendo para que el supervisor reviva el servicio');
+      broadcast({ type: 'restarting' });
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveConfig(); }
+      setTimeout(() => process.exit(0), 300); // deja salir el broadcast
 
     } else if (type === 'watch-response') {
       startResponseWatch(ws, sessionId);
