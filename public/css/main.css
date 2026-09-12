@@ -424,3 +424,17 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
 .cm-btn.del{border-color:rgba(255,0,110,.35);color:rgba(255,0,110,.6)}
 .cm-btn.del:hover{border-color:var(--pink);color:var(--pink)}
 .cmds-empty{padding:20px;color:rgba(160,180,200,.4);font-size:11px;text-align:center}
+
+/* BARRA DE ESTADO en pantallas angostas: la información cede, los controles
+   (🎙 dictado y ⟳ refresh) nunca se recortan */
+#sb-session{flex-shrink:1;min-width:0}
+@media (max-width:1250px){
+  #sb-updated,#sb-ctx-txt,#sb-wk-reset,#sb-win-reset{display:none}
+}
+@media (max-width:1000px){
+  #sb-total,#sb-wk-sep,#sb-wk-label,#sb-wk-wrap,#sb-wk-pct{display:none}
+  #sb-mic{margin-left:auto}
+}
+@media (max-width:760px){
+  #sb-session,#sb-voice-win{display:none}
+}
