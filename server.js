@@ -429,7 +429,114 @@ function readClaudeUsage(session) {
   };
 }
 
-const usageProviders = { 'claude-code': readClaudeUsage };
+// ── Codex: consumo desde sus rollouts (~/.codex/sessions) ─────
+// Cada sesión de Codex escribe un JSONL con eventos token_count que traen
+// totales, ventana de contexto Y los límites del plan reportados por el
+// servidor de OpenAI (5h + semanal, con used_percent exacto). Se aparea
+// panel↔rollout por cwd (la primera línea del archivo es session_meta).
+const CODEX_SESSIONS = path.join(process.env.HOME || process.env.USERPROFILE || '', '.codex', 'sessions');
+const codexFileCwd = new Map(); // file -> cwd (cache de la primera línea)
+const codexCache = new Map();   // file -> estado de parseo incremental
+let codexListCache = { at: 0, list: [] };
+
+function codexRollouts() {
+  if (Date.now() - codexListCache.at < 10000) return codexListCache.list;
+  const out = [];
+  const cutoff = Date.now() - 3 * 86400e3; // solo rollouts de los últimos 3 días
+  const walk = (dir, depth) => {
+    let es; try { es = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of es) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory() && depth < 3) walk(p, depth + 1);
+      else if (e.isFile() && e.name.endsWith('.jsonl')) {
+        try { const st = fs.statSync(p); if (st.mtimeMs >= cutoff) out.push({ p, m: st.mtimeMs }); } catch {}
+      }
+    }
+  };
+  walk(CODEX_SESSIONS, 0);
+  out.sort((a, b) => b.m - a.m);
+  codexListCache = { at: Date.now(), list: out };
+  return out;
+}
+
+function codexCwdOf(file) {
+  if (codexFileCwd.has(file)) return codexFileCwd.get(file);
+  let cwd = null;
+  try {
+    // La línea session_meta puede ser ENORME (20KB+ con instrucciones
+    // embebidas) — buffer amplio y, si aun así quedó cortada, regex.
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(262144);
+    let n;
+    try { n = fs.readSync(fd, buf, 0, buf.length, 0); } finally { fs.closeSync(fd); }
+    const chunk = buf.toString('utf8', 0, n);
+    const nl = chunk.indexOf('\n');
+    try {
+      const obj = JSON.parse(nl >= 0 ? chunk.slice(0, nl) : chunk);
+      cwd = (obj.payload && obj.payload.cwd) || null;
+    } catch {
+      const m = /"cwd":"((?:[^"\\]|\\.)*)"/.exec(chunk);
+      if (m) { try { cwd = JSON.parse('"' + m[1] + '"'); } catch {} }
+    }
+  } catch {}
+  codexFileCwd.set(file, cwd);
+  return cwd;
+}
+
+function readCodexUsage(session) {
+  const target = path.resolve(session.cwd);
+  const hit = codexRollouts().find(f => codexCwdOf(f.p) === target);
+  if (!hit) return null;
+  const file = hit.p;
+  let st; try { st = fs.statSync(file); } catch { return null; }
+  let c = codexCache.get(file);
+  if (!c || c.ino !== st.ino || st.size < c.size) {
+    c = { ino: st.ino, size: 0, leftover: '', model: '', turns: 0, info: null, limits: null };
+    codexCache.set(file, c);
+  }
+  if (st.size > c.size) {
+    const len = st.size - c.size;
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, len, c.size); } finally { fs.closeSync(fd); }
+    c.size = st.size;
+    const lines = (c.leftover + buf.toString('utf8')).split('\n');
+    c.leftover = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let obj; try { obj = JSON.parse(line); } catch { continue; }
+      const pl = obj.payload || {};
+      if (pl.model) c.model = pl.model;
+      if (pl.type === 'token_count' && pl.info) {
+        c.info = pl.info;
+        c.turns++;
+        if (pl.rate_limits) c.limits = pl.rate_limits;
+      }
+    }
+  }
+  if (!c.info) return null;
+  const t = c.info.total_token_usage || {};
+  const last = c.info.last_token_usage || {};
+  const pick = w => w ? { percent: w.used_percent, resetAt: (w.resets_at || 0) * 1000 } : null;
+  return {
+    input: Math.max(0, (t.input_tokens || 0) - (t.cached_input_tokens || 0)),
+    output: t.output_tokens || 0,
+    cacheRead: t.cached_input_tokens || 0,
+    cacheCreate: t.cache_write_input_tokens || 0,
+    turns: c.turns,
+    context: last.input_tokens || 0,
+    contextWindow: c.info.model_context_window || 0,
+    model: c.model,
+    // Límites del plan de OpenAI, exactos, para que la barra cambie de cuenta
+    limits: c.limits ? {
+      session: pick(c.limits.primary),
+      weekly: pick(c.limits.secondary),
+      plan: c.limits.plan_type || '',
+    } : null,
+  };
+}
+
+const usageProviders = { 'claude-code': readClaudeUsage, codex: readCodexUsage };
 
 // ── TTS neuronal local (Kokoro + Piper) ───────────────────────
 // Un worker Python persistente (scripts/tts-worker.py, venv aislado en
@@ -757,7 +864,9 @@ function gitInfoFor(cwd, cb) {
 function providerFor(session) {
   const tool = (config.tools || []).find(t => t.id === session.toolId);
   if (tool && tool.usageProvider) return tool.usageProvider;
-  if ((session.command || '').toLowerCase().includes('claude')) return 'claude-code';
+  const cmd = (session.command || '').toLowerCase();
+  if (cmd.includes('codex')) return 'codex';
+  if (cmd.includes('claude')) return 'claude-code';
   return null;
 }
 

@@ -44,11 +44,28 @@ function fmtDur(ms) {
   return h > 0 ? `${h}h ${m}m` : `${m}m ${String(s).padStart(2, '0')}s`;
 }
 
+// Límites del proveedor del panel ACTIVO cuando no es Anthropic (p. ej. un
+// panel de Codex trae los de su plan de OpenAI, exactos, en usage.limits) —
+// con eso las barras cambian de cuenta solas según qué consola tengas activa.
+function activeLimits() {
+  const u = activeSessionId ? usageData[activeSessionId] : null;
+  return u && u.limits ? u.limits : null;
+}
+
 // Effective session view: the real number when available, else the local estimate
 function sessionView() {
+  const l = activeLimits();
+  if (l && l.session) return { pct: Math.round(l.session.percent), resetAt: l.session.resetAt, real: true };
   if (official && official.session) return { pct: official.session.percent, resetAt: official.session.resetAt, real: true };
   if (windowInfo && windowInfo.active) return { pct: Math.min(100, Math.round(windowInfo.used / getBudget() * 100)), resetAt: windowInfo.resetAt, real: false };
   return null;
+}
+
+// Vista semanal, también conmutada por proveedor del panel activo
+function weeklyView() {
+  const l = activeLimits();
+  if (l && l.weekly) return { percent: Math.round(l.weekly.percent), resetAt: l.weekly.resetAt };
+  return (official && official.weekly) || null;
 }
 function panelName(id) {
   const el = document.querySelector(`.panel[data-id="${id}"] .ph-name`);
@@ -70,7 +87,7 @@ function renderCountdowns() {
     sbWinReset.className = 'sb-empty';
     sbWinReset.textContent = 'sin actividad';
   }
-  const w = official && official.weekly;
+  const w = weeklyView();
   if (w && w.resetAt) {
     sbWkReset.className = '';
     sbWkReset.textContent = `⟳ ${fmtDur(w.resetAt - Date.now())}`;
@@ -110,6 +127,12 @@ function tickStatusBar() {
 setInterval(tickStatusBar, 1000);
 
 function renderStatusBar() {
+  // Etiquetas según la cuenta que se está mostrando (Anthropic o el plan del
+  // proveedor del panel activo, p. ej. Codex/OpenAI)
+  const lim = activeLimits();
+  document.getElementById('sb-win-label').textContent = lim ? `Sesión · Codex${lim.plan ? ' ' + lim.plan : ''}` : 'Sesión';
+  sbWkLabel.textContent = lim ? 'Semanal · Codex' : 'Semanal';
+
   // ── Session (hero) — exact when the token is readable, else local estimate ──
   const s = sessionView();
   if (s) {
@@ -122,7 +145,7 @@ function renderStatusBar() {
   }
 
   // ── Weekly — exact, only shown when official data is available ──
-  const w = official && official.weekly;
+  const w = weeklyView();
   const wkEls = [sbWkSep, sbWkLabel, sbWkWrap, sbWkPct, sbWkReset];
   if (w) {
     wkEls.forEach(el => el && (el.style.display = ''));
