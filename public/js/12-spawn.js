@@ -27,12 +27,16 @@ function spawnToolId() {
   return toolsList.find(t => t.id === saved) ? saved : selectedToolId;
 }
 
+// Proyectos marcados como contexto para el próximo lanzamiento (path -> name).
+// Se marcan con CLIC DERECHO sobre el proyecto; se limpia al cerrar el menú.
+const spawnCtx = new Map();
+
 function renderSpawnMenu() {
   if (!spawnMenuEl) return;
   const tid = spawnToolId();
   const tool = toolsList.find(t => t.id === tid);
   spawnMenuEl.innerHTML =
-    `<div class="vm-hdr">⚡ LANZAR AQUÍ</div>` +
+    `<div class="vm-hdr">⚡ LANZAR AQUÍ — clic lanza · clic der. marca contexto</div>` +
     // Con más de una herramienta configurada (claude, bash, gemini…), elige
     (toolsList.length > 1
       ? toolsList.map(t =>
@@ -42,12 +46,17 @@ function renderSpawnMenu() {
     // Toggles solo si la herramienta elegida soporta esos flags
     (tool?.resumeFlag ? `<div class="vm-item sp-opt" data-o="resume">${spawnPrefs.resume ? '☑' : '☐'} ↩ retomar conversación</div>` : '') +
     (tool?.skipPermsFlag ? `<div class="vm-item sp-opt" data-o="danger">${spawnPrefs.danger ? '☑' : '☐'} ⚡ skip permisos</div>` : '') +
+    // Resumen de contexto marcado — clic limpia todo
+    (spawnCtx.size
+      ? `<div class="vm-item sp-ctx-clear" title="Clic para quitar todo el contexto">📎 ctx: ${escHtml([...spawnCtx.values()].join(', '))} ✕</div>`
+      : '') +
     (!projectData.length
       ? '<div class="vm-hdr">cargando proyectos…</div>'
       : projectData.map(t =>
           `<div class="vm-hdr">${escHtml(t.tech.toUpperCase())}</div>` +
           t.projects.map(p =>
-            `<div class="vm-item sp-proj" data-path="${escHtml(p.path)}" data-name="${escHtml(p.name)}">${escHtml(p.name)}</div>`
+            `<div class="vm-item sp-proj ${spawnCtx.has(p.path) ? 'sp-ctx-on' : ''}" data-path="${escHtml(p.path)}" data-name="${escHtml(p.name)}">` +
+            `${spawnCtx.has(p.path) ? '📎 ' : ''}${escHtml(p.name)}</div>`
           ).join('')
         ).join(''));
 }
@@ -58,15 +67,17 @@ function quickLaunch(projectPath, projectName) {
   const cols = Math.max(80, Math.floor((0.45 * W - 8) / 7.8));
   const rows = Math.max(24, Math.floor((0.45 * H - 32) / 15.6));
   const tool = toolsList.find(t => t.id === spawnToolId());
+  // Contexto marcado con clic derecho (sin incluir el proyecto principal)
+  const ctx = [...spawnCtx.keys()].filter(p => p !== projectPath);
   ws.send(JSON.stringify({
     type: 'open', projectPath, projectName,
     toolId: spawnToolId(),
     resume: !!tool?.resumeFlag && spawnPrefs.resume,
     dangerousSkip: !!tool?.skipPermsFlag && spawnPrefs.danger,
-    contextPaths: [],
+    contextPaths: ctx,
     cols, rows,
   }));
-  vToast(`⚡ lanzando ${projectName}${tool ? ' con ' + tool.name : ''}…`);
+  vToast(`⚡ lanzando ${projectName}${tool ? ' con ' + tool.name : ''}${ctx.length ? ' + ' + ctx.length + ' ctx' : ''}…`);
 }
 
 gridWrap.addEventListener('contextmenu', e => {
@@ -85,9 +96,21 @@ gridWrap.addEventListener('contextmenu', e => {
   m.style.left = Math.min(e.clientX, innerWidth - 250) + 'px';
   m.style.top = Math.min(e.clientY, innerHeight - 340) + 'px';
   spawnMenuEl = m;
+  spawnCtx.clear(); // el contexto marcado es por lanzamiento, no persiste
   renderSpawnMenu();
   if (!projectData.length) ws.send(JSON.stringify({ type: 'projects' })); // se repinta al llegar
+  // Clic derecho sobre un proyecto = marcar/desmarcar como contexto (--add-dir)
+  m.addEventListener('contextmenu', ev => {
+    ev.preventDefault();
+    const proj = ev.target.closest('.sp-proj');
+    if (!proj) return;
+    if (spawnCtx.has(proj.dataset.path)) spawnCtx.delete(proj.dataset.path);
+    else spawnCtx.set(proj.dataset.path, proj.dataset.name);
+    renderSpawnMenu();
+  });
   m.addEventListener('click', ev => {
+    const clear = ev.target.closest('.sp-ctx-clear');
+    if (clear) { spawnCtx.clear(); renderSpawnMenu(); return; }
     const toolIt = ev.target.closest('.sp-tool');
     if (toolIt) { // cambio de herramienta — el menú sigue abierto
       localStorage.setItem('claudemgr-spawn-tool', toolIt.dataset.t);

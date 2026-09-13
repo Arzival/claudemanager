@@ -438,3 +438,8 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
 @media (max-width:760px){
   #sb-session,#sb-voice-win{display:none}
 }
+
+/* Proyectos marcados como contexto en el menú de lanzamiento rápido */
+.sp-proj.sp-ctx-on{color:var(--yellow);background:rgba(255,214,10,.06)}
+.sp-ctx-clear{color:var(--yellow);border-top:1px solid rgba(255,214,10,.2);
+  border-bottom:1px solid rgba(255,214,10,.2);white-space:normal;line-height:1.4}

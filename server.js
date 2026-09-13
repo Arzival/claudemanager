@@ -483,15 +483,12 @@ function codexCwdOf(file) {
   return cwd;
 }
 
-function readCodexUsage(session) {
-  const target = path.resolve(session.cwd);
-  const hit = codexRollouts().find(f => codexCwdOf(f.p) === target);
-  if (!hit) return null;
-  const file = hit.p;
+// Parseo incremental de un rollout (misma mecánica que el lector de Claude)
+function parseCodexFile(file) {
   let st; try { st = fs.statSync(file); } catch { return null; }
   let c = codexCache.get(file);
   if (!c || c.ino !== st.ino || st.size < c.size) {
-    c = { ino: st.ino, size: 0, leftover: '', model: '', turns: 0, info: null, limits: null };
+    c = { ino: st.ino, size: 0, leftover: '', model: '', turns: 0, info: null, limits: null, limitsAt: 0 };
     codexCache.set(file, c);
   }
   if (st.size > c.size) {
@@ -510,14 +507,46 @@ function readCodexUsage(session) {
       if (pl.type === 'token_count' && pl.info) {
         c.info = pl.info;
         c.turns++;
-        if (pl.rate_limits) c.limits = pl.rate_limits;
+        if (pl.rate_limits) {
+          c.limits = pl.rate_limits;
+          c.limitsAt = Date.parse(obj.timestamp) || Date.now();
+        }
       }
     }
+    // Los límites del plan son DE LA CUENTA, no de la sesión: cada snapshot
+    // más nuevo que veamos (venga del rollout que venga) actualiza el global.
+    if (c.limits && c.limitsAt > codexGlobal.at) codexGlobal = { at: c.limitsAt, limits: c.limits };
   }
-  if (!c.info) return null;
+  return c;
+}
+
+// Snapshot global de límites: el más reciente entre todos los rollouts. Se
+// asegura de parsear también el rollout más nuevo del disco aunque no esté
+// apareado a ningún panel (p. ej. una sesión de codex fuera del dashboard).
+let codexGlobal = { at: 0, limits: null };
+function codexGlobalLimits() {
+  const newest = codexRollouts()[0];
+  if (newest) parseCodexFile(newest.p);
+  return codexGlobal.limits;
+}
+
+function readCodexUsage(session) {
+  const target = path.resolve(session.cwd);
+  const hit = codexRollouts().find(f => codexCwdOf(f.p) === target);
+  if (!hit) return null;
+  const c = parseCodexFile(hit.p);
+  if (!c || !c.info) return null;
   const t = c.info.total_token_usage || {};
   const last = c.info.last_token_usage || {};
-  const pick = w => w ? { percent: w.used_percent, resetAt: (w.resets_at || 0) * 1000 } : null;
+  // Un snapshot cuya ventana ya venció NO es consumo actual: la ventana se
+  // reinició sola y el % real es 0 hasta que Codex escriba uno fresco.
+  const pick = w => {
+    if (!w) return null;
+    const resetAt = (w.resets_at || 0) * 1000;
+    if (resetAt && resetAt <= Date.now()) return { percent: 0, resetAt: 0 };
+    return { percent: w.used_percent, resetAt };
+  };
+  const gl = codexGlobalLimits(); // límites de CUENTA — iguales en todos los paneles
   return {
     input: Math.max(0, (t.input_tokens || 0) - (t.cached_input_tokens || 0)),
     output: t.output_tokens || 0,
@@ -527,11 +556,10 @@ function readCodexUsage(session) {
     context: last.input_tokens || 0,
     contextWindow: c.info.model_context_window || 0,
     model: c.model,
-    // Límites del plan de OpenAI, exactos, para que la barra cambie de cuenta
-    limits: c.limits ? {
-      session: pick(c.limits.primary),
-      weekly: pick(c.limits.secondary),
-      plan: c.limits.plan_type || '',
+    limits: gl ? {
+      session: pick(gl.primary),
+      weekly: pick(gl.secondary),
+      plan: gl.plan_type || '',
     } : null,
   };
 }
