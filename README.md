@@ -23,7 +23,9 @@ npm install
 npm start
 ```
 
-Abre **http://localhost:3000** — la primera vez aparece un modal de configuración. No hay que editar ningún archivo manualmente.
+Abre **http://localhost:3000** — la primera vez aparece un modal de configuración. No hay que editar ningún archivo manualmente. (El puerto se puede cambiar con la variable de entorno `PORT`.)
+
+> Todo el estado del dashboard (sesiones, historial de comandos, voces, caché de consumo) vive en `~/.claudemanager/`, fuera del repo — actualizar el proyecto nunca toca tu configuración.
 
 ## Configuración inicial
 
@@ -56,6 +58,14 @@ Haz clic en **＋ OPEN PROJECT**:
 6. Click **LAUNCH**
 
 > Los proyectos de contexto se pasan vía `--add-dir` al lanzar (en Claude Code), por lo que la IA tiene acceso real a esos directorios desde el inicio de la sesión.
+
+### Lanzamiento rápido — clic derecho en el tablero
+
+Para el día a día hay un camino más corto que el picker: **clic derecho sobre un hueco vacío del tablero** abre un menú compacto en el cursor:
+
+- Elige la **herramienta** (si tienes varias; recuerda tu última elección) y los toggles de retomar/skip — solo aparecen los que esa herramienta soporta.
+- **Clic derecho sobre un proyecto** de la lista lo marca como **contexto** (📎, equivalente a `＋ ctx`); marca los que quieras.
+- **Clic en el proyecto principal** → la consola se lanza con ese contexto y el panel nace **con su esquina donde hiciste el clic derecho**.
 
 ### Crear carpetas desde el dashboard
 
@@ -109,6 +119,38 @@ El layout se guarda automáticamente en `localStorage` — al recargar o reinici
 | Escribir a la IA | Escribe directamente en el panel |
 | Limpiar el panel localmente | **Ctrl + K** |
 
+## Sugerencias de comandos (shells)
+
+En sesiones cuyo proceso en primer plano es un shell (bash/zsh/ssh — nunca dentro de Claude u otra TUI), el dashboard **aprende los comandos que ejecutas** en una lista global compartida entre proyectos. Al escribir 2+ caracteres aparece una caja con coincidencias: `↑↓` elige, `Enter` ejecuta, `Tab` solo completa, `Esc` cierra, clic inserta y clic derecho borra la entrada. No registra líneas en prompts de contraseña ni líneas que empiecen con espacio.
+
+El botón **⌨ CMDS** del header abre el gestor del historial: buscador, editar inline (corregir un typo hacia un comando existente fusiona los contadores), borrar por fila y purga de los comandos de un solo uso.
+
+## Git integrado
+
+Cada panel cuyo directorio es un repo muestra un **badge con la rama y los cambios pendientes** (`⎇ main ±3`). Clic en el badge → **drawer lateral** con la lista de archivos modificados y su diff coloreado; los `.md` se abren **renderizados** (con toggle MD/Diff). El ancho del drawer se ajusta arrastrando su borde izquierdo.
+
+## Arrastrar archivos y carpetas a una terminal
+
+Al soltar algo sobre una terminal se pega su **ruta**. El navegador oculta la ruta original por seguridad, así que el servidor la **encuentra**: en macOS con Spotlight (`mdfind`), en Linux buscando en tu Projects Root, Escritorio, Descargas y Documentos — verificando nombre y tamaño exactos (o hijos, en carpetas) y aceptando solo coincidencias únicas. Lo que no se puede resolver se sube como copia temporal (con aviso). Si la app de origen sí expone la ruta (VS Code…), se pega directa.
+
+## Reinicio del servicio y actualización automática
+
+- El botón **⟳** del header reinicia el servicio completo (con confirmación): las sesiones se relanzan y el navegador se reconecta solo. Requiere correr con el autostart (launchd/systemd/Task Scheduler) — con `npm start` a mano el servicio quedaría apagado.
+- En **⚙ CONFIG** puedes poner un **comando de actualización** que corre en cada arranque/reinicio, en segundo plano (ej. `brew upgrade --cask claude-code` en macOS, `npm update -g @anthropic-ai/claude-code` o el gestor de tu distro en Linux). El resultado llega como aviso al dashboard. Vacío = desactivado.
+
+## Codex como herramienta
+
+Codex CLI funciona igual que Claude como herramienta. En **⚙ CONFIG → Herramientas**:
+
+| Campo | Valor |
+|-------|-------|
+| Comando | ruta de `codex` (ej. `/opt/homebrew/bin/codex` o `~/.local/bin/codex`) |
+| Flag skip permisos | `--dangerously-bypass-approvals-and-sandbox` (o `--approve-for-me` para mantener su sandbox) |
+| Flag reanudar | vacío (o `resume`, que abre su picker de sesiones) |
+| Flag agregar directorio | `--add-dir` |
+
+El **consumo también funciona con Codex**: al enfocar uno de sus paneles, la barra muta a los límites exactos de tu plan de ChatGPT (5h y semanal, etiquetados "· Codex") leídos de sus rollouts locales, con modelo y contexto por sesión — y vuelve a Anthropic al enfocar un panel de Claude. La lectura por voz de respuestas es Claude-only por ahora.
+
 ## Control por voz 🎙
 
 Puedes dictarle prompts a cualquier consola diciendo su nombre, y opcionalmente que la respuesta se te lea en voz alta. Todo el reconocimiento es **local** (whisper.cpp en tu equipo): el audio nunca sale de tu máquina, y funciona en cualquier navegador (Opera GX, Brave, Chrome, Firefox…) porque no depende de las APIs de voz del navegador.
@@ -139,7 +181,9 @@ curl -L -o ~/.claudemanager/models/ggml-small.bin \
 
 **Panel activo (conversación continua):** después de cada dictado, ese panel queda "activo" — los siguientes dictados **sin nombre** le llegan directo, mientras sigas hablando con pausas menores a la ventana (5 min por defecto; cada mensaje la renueva). Decir solo el nombre (*"desk"*) también lo selecciona sin mandar nada. Pasada la ventana en silencio, vuelve el "¿a qué consola?". Junto al 🎙 de la barra verás el contador en vivo (`🎯 desk ⟳ 4:32`) de quién recibe los dictados sin nombre y cuánto le queda.
 
-**Clic derecho en 🎙** abre las opciones de voz: cambiar la tecla de push-to-talk, ajustar los minutos de la ventana del panel activo (0 la desactiva) y el **filtro de idiomas de las voces** (marca uno o varios; nada marcado = todas — aplica a los selectores de todos los paneles). Todo se guarda por navegador.
+**Clic derecho en 🎙** abre las opciones de voz: cambiar la tecla de push-to-talk, ajustar los minutos de la ventana del panel activo (0 la desactiva), **fijar un micrófono** concreto (o dejar el del sistema; si el fijado no está conectado, cae al default con aviso) y el **filtro de idiomas de las voces** (marca uno o varios; nada marcado = todas — aplica a los selectores de todos los paneles). Todo se guarda por navegador.
+
+**Si el nombre no se reconoce, el dictado no se pierde**: aparece un panel de rescate con el texto transcrito y un botón por cada consola para mandarlo con un clic (o cancelar) — persiste hasta que decidas.
 
 ### Voz de respuesta (opcional, por panel)
 
@@ -162,7 +206,7 @@ Los motores neuronales son **opcionales**: sin instalarlos, el selector muestra 
 
 Notas de rendimiento: la primera vez que un motor se usa paga un arranque en frío (~2-5s cargando el modelo); el servidor **precalienta al arrancar** los motores de las voces que ya tengas asignadas a paneles, así que en el uso diario no lo notas. La lectura incremental sintetiza cada bloque mientras suena el anterior.
 
-Instalación de los motores (macOS/Linux; en Windows cambia las rutas):
+Instalación de los motores (macOS/Linux; en Windows cambia las rutas). En Linux necesitas `python3-venv` y `pip` (`sudo apt install python3-venv python3-pip` en Debian/Ubuntu):
 
 ```bash
 python3 -m venv ~/.claudemanager/tts/venv
