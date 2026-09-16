@@ -1,0 +1,251 @@
+/* movil.css — Interfaz móvil.
+ *
+ * Todo vive bajo `body.movil`, una clase que pone 14-movil.js según el viewport.
+ * En escritorio este archivo no pinta absolutamente nada: sin la clase, ninguna
+ * de estas reglas aplica. Así conviven las dos vistas en un solo index.html sin
+ * builds separados ni duplicar el código de las terminales.
+ *
+ * Variables propias para no tocar las de main.css.
+ */
+
+:root {
+  --mv-alto-top: 52px;   /* barra superior de la vista sesión */
+  --mv-alto-teclas: 40px;
+  /* Alto real del viewport. Lo actualiza JS con visualViewport: en móvil el
+     teclado NO reduce 100vh, así que sin esto el compositor queda tapado. */
+  --mv-vh: 100dvh;
+}
+
+/* Piezas móviles: ocultas por defecto (escritorio) */
+#mv-lista, #mv-top, #mv-abajo, #mv-hoja, #mv-hoja-fondo, #mv-instalar { display: none; }
+
+/* ═══════════════════════════════════════════════════════════
+   MODO MÓVIL
+   ═══════════════════════════════════════════════════════════ */
+body.movil { overflow: hidden; }
+
+/* Cromo de escritorio que no cabe ni tiene sentido con el dedo */
+body.movil header,
+body.movil #ws-bar,
+body.movil #status-bar,
+body.movil #git-drawer,
+body.movil #cmds-bar { display: none !important; }
+
+body.movil #grid-wrap { padding: 0; margin: 0; overflow: hidden; }
+body.movil #canvas { transform: none !important; width: 100% !important; height: 100% !important; }
+
+/* ── Vista LISTA ─────────────────────────────────────────── */
+body.movil #mv-lista {
+  display: flex; flex-direction: column;
+  position: fixed; inset: 0; z-index: 400;
+  background: var(--bg);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+body.movil.en-sesion #mv-lista { display: none; }
+
+#mv-lista-top {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+  background: #07071a; flex-shrink: 0;
+}
+#mv-marca { font-size: 15px; letter-spacing: 1px; color: var(--cyan); flex: 1; font-weight: bold; }
+#mv-marca i { color: var(--pink); font-style: normal; }
+#mv-notif {
+  background: none; border: 1px solid var(--border); color: #9ab0c4;
+  font-size: 16px; width: 40px; height: 40px; border-radius: 8px; cursor: pointer;
+}
+#mv-notif.on { border-color: var(--green); color: var(--green); }
+
+#mv-sesiones { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px 96px; }
+
+.mv-card {
+  display: flex; align-items: center; gap: 12px;
+  background: #090916; border: 1px solid rgba(0,245,255,.18);
+  border-radius: 12px; padding: 14px; margin-bottom: 10px;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.mv-card:active { background: rgba(0,245,255,.07); }
+.mv-card .dot { flex-shrink: 0; width: 10px; height: 10px; border-radius: 50%; }
+.mv-card-txt { flex: 1; min-width: 0; }
+.mv-card-n { color: #d8ecff; font-size: 14px; font-weight: bold;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mv-card-s { color: #6b8098; font-size: 11px; margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mv-card-ch { color: #3a4a5c; font-size: 20px; flex-shrink: 0; }
+
+/* Centrado en el hueco de la lista, no empujado bajo ella. */
+#mv-vacio { display: none; position: absolute; left: 0; right: 0;
+  top: 50%; transform: translateY(-50%);
+  text-align: center; color: #5a6e82; padding: 0 30px; font-size: 13px; pointer-events: none; }
+#mv-vacio.on { display: block; }
+#mv-vacio .mv-sub { color: #3f5266; font-size: 12px; margin-top: 8px; }
+
+#mv-nueva {
+  position: fixed; right: 20px; z-index: 401;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  width: 60px; height: 60px; border-radius: 50%;
+  background: var(--cyan); color: #04040f; border: none;
+  font-size: 30px; line-height: 1; cursor: pointer;
+  box-shadow: 0 6px 24px rgba(0,245,255,.4);
+}
+body.movil.en-sesion #mv-nueva { display: none; }
+
+/* ── Vista SESIÓN ────────────────────────────────────────── */
+/* Los paneles siguen siendo los mismos del tablero; aquí solo se oculta todo
+   menos el activo y se le quita el cromo de ventana. */
+body.movil .panel { display: none !important; }
+body.movil .panel.mv-activo {
+  display: flex !important; flex-direction: column;
+  position: fixed !important;
+  left: 0 !important; right: 0 !important; width: 100% !important;
+  top: calc(var(--mv-alto-top) + env(safe-area-inset-top)) !important;
+  height: auto !important;
+  bottom: calc(var(--mv-alto-teclas) + 56px + env(safe-area-inset-bottom)) !important;
+  transform: none !important; border: none !important; border-radius: 0 !important;
+  box-shadow: none !important; z-index: 300 !important;
+}
+/* Cabecera de panel y manijas de resize: no aplican con el dedo */
+body.movil .panel .ph,
+body.movil .panel .rh,
+body.movil .panel .cmdbox { display: none !important; }
+body.movil .panel .tw { flex: 1; min-height: 0; padding: 4px 6px; }
+
+#mv-top {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 402;
+  height: calc(var(--mv-alto-top) + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  display: none; align-items: center; gap: 10px; padding-left: 4px; padding-right: 10px;
+  background: #07071a; border-bottom: 1px solid var(--border);
+}
+body.movil.en-sesion #mv-top { display: flex; }
+#mv-atras { background: none; border: none; color: var(--cyan); font-size: 32px;
+  width: 44px; height: 44px; cursor: pointer; line-height: 1; }
+#mv-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+#mv-nombre { flex: 1; color: #d8ecff; font-size: 14px; font-weight: bold;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#mv-cerrar { background: none; border: none; color: #6b8098; font-size: 18px;
+  width: 40px; height: 40px; cursor: pointer; }
+
+/* ── Compositor ──────────────────────────────────────────── */
+#mv-abajo {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 402;
+  display: none; flex-direction: column;
+  background: #07071a; border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+body.movil.en-sesion #mv-abajo { display: flex; }
+
+#mv-teclas {
+  display: flex; gap: 6px; padding: 5px 8px; overflow-x: auto;
+  height: var(--mv-alto-teclas); align-items: center;
+  border-bottom: 1px solid rgba(0,245,255,.1);
+  scrollbar-width: none;
+}
+#mv-teclas::-webkit-scrollbar { display: none; }
+#mv-teclas button {
+  flex-shrink: 0; min-width: 44px; height: 30px; padding: 0 10px;
+  background: rgba(0,245,255,.07); border: 1px solid rgba(0,245,255,.25);
+  color: #9fd8e8; border-radius: 7px; font-size: 13px;
+  font-family: 'Courier New', monospace; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+#mv-teclas button:active { background: rgba(0,245,255,.25); color: #fff; }
+
+#mv-comp { display: flex; align-items: flex-end; gap: 8px; padding: 8px; }
+#mv-texto {
+  flex: 1; resize: none; max-height: 40vh; min-height: 40px;
+  background: #04040f; border: 1px solid rgba(0,245,255,.25);
+  color: #d8ecff; border-radius: 10px; padding: 10px 12px;
+  font-family: 'Courier New', monospace; font-size: 16px; /* 16px evita el zoom automático de iOS */
+  line-height: 1.4; outline: none;
+}
+#mv-texto:focus { border-color: var(--cyan); }
+#mv-expandir, #mv-enviar {
+  flex-shrink: 0; width: 40px; height: 40px; border-radius: 10px; cursor: pointer;
+  border: 1px solid rgba(0,245,255,.25); background: rgba(0,245,255,.07);
+  color: #9fd8e8; font-size: 15px;
+}
+#mv-enviar { background: var(--cyan); color: #04040f; border-color: var(--cyan); font-size: 17px; }
+
+/* Modo "escribir en grande" para instrucciones largas */
+body.movil.escribiendo #mv-abajo { top: env(safe-area-inset-top); }
+body.movil.escribiendo #mv-texto { max-height: none; height: 100%; }
+body.movil.escribiendo #mv-comp { flex: 1; align-items: stretch; }
+body.movil.escribiendo .panel.mv-activo, body.movil.escribiendo #mv-top { display: none !important; }
+
+/* ── Hoja inferior: lanzar ───────────────────────────────── */
+body.movil #mv-hoja-fondo {
+  display: none; position: fixed; inset: 0; z-index: 450;
+  background: rgba(0,0,0,.6); backdrop-filter: blur(2px);
+}
+body.movil #mv-hoja {
+  display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 451;
+  max-height: 88dvh; background: #07071a;
+  border-top: 1px solid var(--border); border-radius: 18px 18px 0 0;
+  flex-direction: column; padding-bottom: env(safe-area-inset-bottom);
+}
+body.movil.hoja #mv-hoja, body.movil.hoja #mv-hoja-fondo { display: flex; }
+#mv-hoja-asa { width: 40px; height: 4px; border-radius: 2px; background: #2a3a4a;
+  margin: 10px auto 4px; flex-shrink: 0; }
+#mv-hoja-cuerpo { overflow-y: auto; padding: 8px 18px 20px; }
+#mv-hoja-cuerpo h3 { color: var(--cyan); font-size: 15px; margin: 6px 0 16px; letter-spacing: 1px; }
+.mv-lbl { display: block; color: #5a7086; font-size: 11px; letter-spacing: 1px;
+  text-transform: uppercase; margin: 16px 0 8px; }
+#mv-ruta { color: #6b8098; font-size: 11px; margin-bottom: 8px; min-height: 14px; }
+#mv-ruta b { color: var(--cyan); font-weight: normal; }
+
+#mv-proyectos { max-height: 34dvh; overflow-y: auto; border: 1px solid rgba(0,245,255,.14); border-radius: 10px; }
+.mv-item { display: flex; align-items: center; gap: 10px; padding: 13px 14px;
+  color: #b8cbe0; font-size: 14px; cursor: pointer;
+  border-bottom: 1px solid rgba(0,245,255,.07); -webkit-tap-highlight-color: transparent; }
+.mv-item:last-child { border-bottom: none; }
+.mv-item:active { background: rgba(0,245,255,.08); }
+.mv-item.sel { background: rgba(0,245,255,.13); color: #fff; }
+.mv-item .ic { color: #3f7a8c; flex-shrink: 0; }
+
+#mv-tools { display: flex; gap: 8px; flex-wrap: wrap; }
+.mv-chip { padding: 11px 16px; border-radius: 10px; font-size: 13px; cursor: pointer;
+  background: rgba(0,245,255,.06); border: 1px solid rgba(0,245,255,.25); color: #9fd8e8; }
+.mv-chip.sel { background: var(--cyan); color: #04040f; border-color: var(--cyan); font-weight: bold; }
+
+#mv-opts { margin-top: 14px; display: flex; flex-direction: column; gap: 4px; }
+.mv-sw { display: flex; align-items: center; gap: 10px; padding: 11px 2px;
+  color: #b8cbe0; font-size: 13px; cursor: pointer; }
+.mv-sw input { appearance: none; width: 44px; height: 26px; border-radius: 13px; margin: 0;
+  background: #1a2634; border: 1px solid rgba(0,245,255,.2); position: relative;
+  cursor: pointer; flex-shrink: 0; transition: background .15s; }
+.mv-sw input::after { content: ''; position: absolute; top: 3px; left: 3px;
+  width: 18px; height: 18px; border-radius: 50%; background: #5a7086; transition: transform .15s, background .15s; }
+.mv-sw input:checked { background: rgba(0,245,255,.25); border-color: var(--cyan); }
+.mv-sw input:checked::after { transform: translateX(18px); background: var(--cyan); }
+.mv-sw.oculto { display: none; }
+
+#mv-lanzar { width: 100%; margin-top: 22px; padding: 16px; border-radius: 12px;
+  background: var(--cyan); color: #04040f; border: none; font-size: 15px;
+  font-weight: bold; letter-spacing: 2px; cursor: pointer; font-family: 'Courier New', monospace; }
+#mv-lanzar:disabled { background: #1a2634; color: #4a5e72; cursor: not-allowed; }
+
+/* ── Aviso de instalación ────────────────────────────────── */
+body.movil #mv-instalar {
+  display: none; position: fixed; z-index: 460;
+  left: 12px; right: 12px; bottom: calc(96px + env(safe-area-inset-bottom));
+  background: #0d1426; border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; color: #b8cbe0; font-size: 12.5px; line-height: 1.5;
+  align-items: flex-start; gap: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.6);
+}
+body.movil #mv-instalar.on { display: flex; }
+/* Solo estorba dentro de una terminal: se muestra únicamente en la lista. */
+body.movil.en-sesion #mv-instalar, body.movil.hoja #mv-instalar { display: none !important; }
+#mv-instalar-txt { flex: 1; }
+#mv-instalar b { color: var(--cyan); font-weight: normal; }
+#mv-instalar-x { background: none; border: none; color: #5a7086; font-size: 15px;
+  cursor: pointer; padding: 0 2px; flex-shrink: 0; }
+
+/* ── Horizontal: el teclado deja poquísimo alto ──────────── */
+@media (orientation: landscape) and (max-height: 500px) {
+  body.movil { --mv-alto-top: 42px; --mv-alto-teclas: 34px; }
+  #mv-texto { min-height: 34px; max-height: 28vh; }
+  #mv-comp { padding: 5px 8px; }
+  #mv-teclas button { height: 26px; }
+}

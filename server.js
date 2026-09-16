@@ -5,11 +5,18 @@ const path = require('path');
 const { execSync, execFile } = require('child_process');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
+const push = require('./push');
 
 process.on('uncaughtException', err => console.error('[uncaughtException]', err.message));
 process.on('unhandledRejection', err => console.error('[unhandledRejection]', err));
 
 const PORT = Number(process.env.PORT) || 3000;
+// Interfaz de escucha. Por defecto se mantiene el comportamiento histórico
+// (todas las interfaces) para no romper a quien ya entra por la IP de su LAN.
+// RECOMENDADO: HOST=127.0.0.1 y delante un proxy con TLS y/o una VPN
+// (tailscale serve, cloudflared, nginx…). El dashboard NO tiene autenticación
+// y abre terminales con tu usuario: quien alcance el puerto tiene una shell.
+const HOST = process.env.HOST || '::';
 const BUFFER_LIMIT = 1000;          // max chunks of replay history per session
 const BUFFER_BYTES = 256 * 1024;    // cap replay history at ~256 KB per session
 const FLUSH_MS = 16; // coalesce PTY output into one broadcast per frame
@@ -275,6 +282,43 @@ function flushOutput(id) {
   broadcast({ type: 'output', sessionId: id, data });
 }
 
+// ── Notificaciones (Web Push) ─────────────────────────────────
+// El idle lo calcula el SERVIDOR, no el navegador: si el móvil está dormido no
+// hay cliente que lo detecte, y ese es justo el caso en que quieres el aviso.
+const IDLE_MS = 5000;            // mismo umbral que el punto amarillo del tablero
+const avisado = new Map();       // sessionId -> último estado notificado
+
+// ¿Alguien está MIRANDO el dashboard ahora mismo? Un cliente conectado no basta:
+// la pestaña puede estar en segundo plano o la pantalla apagada. Los clientes
+// reportan su visibilidad y solo se manda push si nadie está viendo.
+function alguienMirando() {
+  for (const c of clients) if (c.readyState === 1 && c.visible) return true;
+  return false;
+}
+
+function avisarCambio(id, estado) {
+  const s = sessions.get(id);
+  if (!s) return;
+  if (avisado.get(id) === estado) return;
+  avisado.set(id, estado);
+  if (estado !== 'idle' && estado !== 'exited') return;
+  if (alguienMirando()) return;   // lo estás viendo en pantalla, no hace falta molestar
+
+  const nombre = s.name || 'Sesión';
+  push.notify(estado === 'idle'
+    ? { title: `🟡 ${nombre}`, body: 'Terminó o está esperando tu respuesta.', sessionId: id, tag: `cm-${id}` }
+    : { title: `🔴 ${nombre}`, body: 'El proceso terminó.', sessionId: id, tag: `cm-${id}` });
+}
+
+setInterval(() => {
+  const ahora = Date.now();
+  for (const [id, s] of sessions) {
+    if (s.status !== 'running') continue;
+    if (!s.lastOutAt || ahora - s.lastOutAt < IDLE_MS) continue;
+    avisarCambio(id, 'idle');
+  }
+}, 2000);
+
 function broadcast(msg) {
   if (!clients.size) return;
   const str = JSON.stringify(msg);
@@ -293,8 +337,12 @@ function spawnSession(cfg) {
       env: {
         ...process.env,
         HOME: process.env.HOME || process.env.USERPROFILE || '',
-        LANG: process.env.LANG || 'en_US.UTF-8',
-        LC_ALL: process.env.LC_ALL || 'en_US.UTF-8',
+        // Las TUI necesitan UTF-8, pero forzar en_US.UTF-8 rompe donde ese
+        // locale no esta generado (casi cualquier sistema fuera de EE.UU.):
+        // bash escupe 'setlocale: cannot change locale' en CADA sesion.
+        // C.UTF-8 existe siempre en glibc.
+        LANG: process.env.LANG || 'C.UTF-8',
+        LC_ALL: process.env.LC_ALL || process.env.LANG || 'C.UTF-8',
       },
     });
   } catch (err) {
@@ -306,6 +354,7 @@ function spawnSession(cfg) {
   proc.onData((data) => {
     const s = sessions.get(id);
     if (s) s.lastOutAt = Date.now(); // señal de "sigue trabajando" para la voz
+      if (avisado.has(id)) avisado.delete(id); // volvió a producir salida: rearma el aviso
     const buf = buffers.get(id);
     if (!buf) return;
     buf.push(data);
@@ -327,6 +376,7 @@ function spawnSession(cfg) {
     const s = sessions.get(id);
     if (s) s.status = 'exited';
     broadcast({ type: 'status', sessionId: id, status: 'exited' });
+    avisarCambio(id, 'exited');
   });
   sessions.set(id, { ...cfg, proc, status: 'running' });
 }
@@ -1151,7 +1201,10 @@ if ((config.updateCommand || '').trim()) {
 // HTTP server
 let indexCache = null; // in-memory copy of index.html, invalidated by fs.watch below
 const server = http.createServer((req, res) => {
-  if (req.url === '/' || req.url === '/index.html') {
+  // Ruta sin query string: sin esto, "/?session=xxx" (el enlace que abre una
+  // notificación) o "/?movil=1" caían en 404 porque no eran === '/'.
+  const ruta = req.url.split('?')[0];
+  if (ruta === '/' || ruta === '/index.html') {
     // no-cache: sin esto el navegador puede recargar con un index.html viejo
     // de su caché heurística y "no enterarse" de los cambios del cliente.
     const HDRS = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' };
@@ -1165,6 +1218,51 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, HDRS);
       res.end(data);
     });
+  } else if (req.url === '/manifest.webmanifest' || req.url === '/sw.js' || req.url.startsWith('/icons/')) {
+    // Piezas de la PWA. El service worker DEBE servirse desde la raíz para que
+    // su ámbito cubra toda la app, y sin caché para que las actualizaciones del
+    // proyecto lleguen al móvil sin tener que reinstalarla.
+    const rel = decodeURIComponent(req.url.split('?')[0]);
+    const pubDir = path.join(__dirname, 'public');
+    const full = path.join(pubDir, rel);
+    const MIME = {
+      '.webmanifest': 'application/manifest+json; charset=utf-8',
+      '.js': 'text/javascript; charset=utf-8',
+      '.png': 'image/png', '.svg': 'image/svg+xml',
+    };
+    const mime = MIME[path.extname(full).toLowerCase()];
+    if (!full.startsWith(pubDir + path.sep) || !mime) { res.writeHead(404); return res.end('Not found'); }
+    fs.readFile(full, (err, data) => {
+      if (err) { res.writeHead(404); return res.end('Not found'); }
+      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-cache' });
+      res.end(data);
+    });
+
+  } else if (req.url.startsWith('/api/push/')) {
+    // Alta/baja de dispositivos para notificaciones.
+    const accion = req.url.slice('/api/push/'.length).split('?')[0];
+    const json = (code, obj) => {
+      res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(obj));
+    };
+    if (accion === 'key' && req.method === 'GET') {
+      return json(200, { enabled: push.enabled(), publicKey: push.publicKey(), devices: push.count() });
+    }
+    if ((accion === 'subscribe' || accion === 'unsubscribe') && req.method === 'POST') {
+      let raw = '';
+      req.on('data', c => {
+        raw += c;
+        if (raw.length > 16 * 1024) { req.destroy(); }   // un cuerpo así no es una suscripción legítima
+      });
+      req.on('end', () => {
+        let body; try { body = JSON.parse(raw); } catch { return json(400, { ok: false, error: 'JSON inválido' }); }
+        if (accion === 'subscribe') return json(200, { ok: push.subscribe(body) });
+        return json(200, { ok: push.unsubscribe(body && body.endpoint) });
+      });
+      return;
+    }
+    return json(404, { ok: false, error: 'Not found' });
+
   } else if (/^\/(js|css)\//.test(req.url)) {
     // Módulos del cliente (public/js, public/css) — no-cache igual que el
     // index para que las recargas siempre traigan la versión del disco.
@@ -1221,6 +1319,9 @@ const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
   clients.add(ws);
+  // Se asume visible hasta que el cliente diga lo contrario; los navegadores
+  // viejos que no manden 'presence' se comportan como antes.
+  ws.visible = true;
 
   // Send config state on connect so client knows if setup is needed
   ws.send(JSON.stringify({
@@ -1244,7 +1345,13 @@ wss.on('connection', (ws) => {
     try { msg = JSON.parse(raw); } catch { return; }
     const { type, sessionId } = msg;
 
-    if (type === 'list') {
+    if (type === 'presence') {
+      // El navegador reporta si su pestaña está a la vista. Sirve para no
+      // mandarte una notificación al móvil por algo que ya estás viendo.
+      ws.visible = !!msg.visible;
+      return;
+
+    } else if (type === 'list') {
       const list = [];
       for (const [id, s] of sessions)
         list.push({ id, name: s.name, cwd: s.cwd, status: s.status, cols: s.cols || 80, rows: s.rows || 24, subtitle: s.subtitle || '', voice: s.voice || '' });
@@ -1575,9 +1682,15 @@ wss.on('connection', (ws) => {
   ws.on('error', () => { clients.delete(ws); stopResponseWatch(ws, false); dictations.delete(ws); });
 });
 
-server.listen(PORT, () => {
+push.init();
+
+server.listen(PORT, HOST, () => {
   console.log(`CladeManager running → http://localhost:${PORT}`);
+  console.log(HOST === '127.0.0.1' || HOST === 'localhost'
+    ? '[red] escuchando solo en localhost (expón con un proxy/VPN: tailscale serve, cloudflared…)'
+    : `[red] escuchando en TODAS las interfaces (${HOST}) — sin autenticación. Usa HOST=127.0.0.1 si lo publicas.`);
   if (!isConfigured()) console.log('⚠ Not configured — open the browser to complete setup.');
+  if (push.enabled()) console.log(`[push] listo — ${push.count()} dispositivo(s) suscrito(s)`);
 });
 
 let reloadTimer;

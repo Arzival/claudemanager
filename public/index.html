@@ -2,13 +2,31 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!-- viewport-fit=cover + env(safe-area-inset-*) en el CSS: sin esto, en iPhone
+     el notch y la barra de gestos se comen la interfaz. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>CLAUDE//MANAGER</title>
+
+<!-- ── PWA ──────────────────────────────────────────────────────
+     Instalable en Android e iOS. En iOS es OBLIGATORIO instalarla
+     (Compartir → Añadir a inicio) para que lleguen notificaciones:
+     en una pestaña normal de Safari, Web Push no existe. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#090916">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="icons/favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Manager">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-webgl@0.16.0/lib/xterm-addon-webgl.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/movil.css">
 </head>
 <body>
 <header>
@@ -237,6 +255,81 @@
   </div>
 </div>
 
+<!-- ══════════ INTERFAZ MÓVIL ══════════
+     Oculta por completo en escritorio (css/movil.css). No duplica terminales:
+     reutiliza los mismos .panel que el tablero, solo cambia cómo se navegan. -->
+
+<!-- Vista lista: el "inbox" de sesiones -->
+<div id="mv-lista" aria-label="Sesiones">
+  <div id="mv-lista-top">
+    <span id="mv-marca">CLAUDE<i>//</i>MANAGER</span>
+    <button id="mv-notif" title="Activar notificaciones">🔔</button>
+  </div>
+  <div id="mv-sesiones"></div>
+  <div id="mv-vacio">
+    <p>Sin sesiones abiertas.</p>
+    <p class="mv-sub">Toca ＋ para lanzar una.</p>
+  </div>
+  <button id="mv-nueva" title="Nueva sesión">＋</button>
+</div>
+
+<!-- Barra superior de la vista sesión -->
+<div id="mv-top">
+  <button id="mv-atras" title="Volver">‹</button>
+  <span class="dot" id="mv-dot"></span>
+  <span id="mv-nombre"></span>
+  <button id="mv-cerrar" title="Cerrar sesión">✕</button>
+</div>
+
+<!-- Compositor + teclas que el teclado táctil no tiene -->
+<div id="mv-abajo">
+  <div id="mv-teclas">
+    <button data-k="esc">esc</button>
+    <button data-k="tab">tab</button>
+    <button data-k="up">↑</button>
+    <button data-k="down">↓</button>
+    <button data-k="left">←</button>
+    <button data-k="right">→</button>
+    <button data-k="ctrl-c">^C</button>
+    <button data-k="enter">⏎</button>
+  </div>
+  <div id="mv-comp">
+    <textarea id="mv-texto" rows="1" placeholder="Escribe un mensaje…"
+              autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+    <button id="mv-expandir" title="Escribir en grande">⤢</button>
+    <button id="mv-enviar" title="Enviar">➤</button>
+  </div>
+</div>
+
+<!-- Hoja inferior: lanzar sesión nueva -->
+<div id="mv-hoja-fondo"></div>
+<div id="mv-hoja">
+  <div id="mv-hoja-asa"></div>
+  <div id="mv-hoja-cuerpo">
+    <h3>Nueva sesión</h3>
+
+    <label class="mv-lbl">Proyecto</label>
+    <div id="mv-ruta"></div>
+    <div id="mv-proyectos"></div>
+
+    <label class="mv-lbl">Herramienta</label>
+    <div id="mv-tools"></div>
+
+    <div id="mv-opts">
+      <label class="mv-sw" id="mv-sw-resume"><input type="checkbox" id="mv-resume"><span></span>↩ retomar conversación</label>
+      <label class="mv-sw" id="mv-sw-skip"><input type="checkbox" id="mv-skip"><span></span>⚡ skip permisos</label>
+    </div>
+
+    <button id="mv-lanzar" disabled>LANZAR</button>
+  </div>
+</div>
+
+<!-- Aviso de instalación (iOS no tiene diálogo automático) -->
+<div id="mv-instalar">
+  <span id="mv-instalar-txt"></span>
+  <button id="mv-instalar-x">✕</button>
+</div>
+
 <script src="js/01-estado.js"></script>
 <script src="js/02-workspaces.js"></script>
 <script src="js/03-layout.js"></script>
@@ -250,5 +343,7 @@
 <script src="js/11-ws.js"></script>
 <script src="js/12-spawn.js"></script>
 <script src="js/13-admin.js"></script>
+<script src="js/14-movil.js"></script>
+<script src="js/15-notificaciones.js"></script>
 </body>
 </html>

@@ -303,6 +303,82 @@ El porcentaje real se obtiene de tu cuenta usando las **credenciales locales** q
 - 🟡 Amarillo — idle (sin output por más de 5 s)
 - 🔴 Rojo — proceso terminado
 
+## Acceso desde el móvil 📱
+
+El dashboard trae una **vista móvil** que se activa sola en pantallas táctiles pequeñas: en vez del tablero de paneles libres, una lista de sesiones estilo chat.
+
+| Escritorio | Móvil |
+|---|---|
+| Paneles flotantes que colocas a mano | Lista de sesiones → tocas una → terminal a pantalla completa |
+| Teclado físico | Compositor de texto + barra de teclas especiales |
+| Varias terminales a la vez | Una a la vez, vuelves con ‹ o el botón atrás del sistema |
+
+Es el **mismo `index.html`**: no hay build aparte ni una app distinta que mantener. La detección es por tamaño de viewport y tipo de puntero (nunca por user-agent). Para probarla desde el escritorio, añade `?movil=1` a la URL — y `?movil=0` fuerza la de escritorio.
+
+### Lo que cambia en la vista móvil
+
+- **Lista de sesiones** con su punto de estado, nombre y ruta. Toca para entrar.
+- **＋** abajo a la derecha: lanza una sesión nueva sin depender del escritorio. Eliges carpeta → proyecto → herramienta → *retomar* / *skip permisos* → LANZAR.
+- **Barra de teclas** sobre el compositor: `esc` `tab` `↑` `↓` `←` `→` `^C` `⏎`. No es un adorno — un teclado táctil no las tiene, y sin `esc` no puedes interrumpir a Claude ni salir de un prompt interactivo.
+- **⤢ escribir en grande**: el compositor ocupa toda la pantalla para instrucciones largas y vuelve a encogerse al enviar.
+- **Rotación**: funciona en vertical y horizontal. Al girar se recalculan columnas y filas y se le avisa al proceso, así que la TUI se reacomoda sola. En vertical caben ~40 columnas; en horizontal ~80, bastante más cómodo para leer salidas largas.
+
+### Requisito: servirlo por HTTPS
+
+Desde otro dispositivo hace falta **HTTPS con certificado válido**. No es capricho: sin él no hay PWA instalable ni notificaciones, y el navegador bloquea la conexión WebSocket del dashboard por contenido mixto.
+
+El proyecto **no depende de ningún proveedor concreto**. Cualquiera de estas sirve:
+
+| Opción | Cómo |
+|---|---|
+| **Tailscale** | `tailscale serve --bg 3000` — HTTPS con certificado `*.ts.net`, solo visible dentro de tu red privada |
+| **Cloudflare Tunnel** | `cloudflared tunnel --url http://localhost:3000` |
+| **Proxy propio** | nginx/Caddy con Let's Encrypt delante del puerto 3000 |
+| **Red local** | [`mkcert`](https://github.com/FiloSottile/mkcert) + un proxy TLS |
+
+> ⚠️ **El dashboard no tiene autenticación** y abre terminales con tu usuario. Quien alcance el puerto tiene una shell en tu máquina. Publícalo **solo** en una red privada (VPN/tailnet) o detrás de un proxy que exija autenticación. Nunca lo expongas directo a internet — en Tailscale eso significa `serve`, **jamás** `funnel`.
+
+### Instalarlo como app
+
+Instalarla da pantalla completa sin barra del navegador, ícono propio y — sobre todo — **es obligatorio en iOS para recibir notificaciones**.
+
+| Plataforma | Cómo |
+|---|---|
+| **Android** (Chrome/Edge) | Menú ⋮ → *Instalar aplicación* (o el aviso que sale solo) |
+| **iOS / iPadOS** (Safari) | **Compartir** → **Añadir a pantalla de inicio** |
+| Escritorio | Icono de instalar en la barra de direcciones |
+
+En iOS no existe un diálogo automático de instalación, así que el dashboard muestra un aviso explicándolo la primera vez.
+
+## Notificaciones 🔔
+
+Avisan al móvil cuando una sesión **termina o se queda esperando tu respuesta** (🟡) y cuando un **proceso muere** (🔴). Útil para supervisar sin estar revisando el teléfono a cada rato.
+
+Se activan con la campana de la barra superior en la vista móvil. El servidor genera sus llaves VAPID solo la primera vez y las guarda en `~/.claudemanager/push.json` (permisos `600`) — **nunca en el repo**, porque son la identidad de tu servidor.
+
+### Compatibilidad
+
+| Plataforma | Push | Requisito |
+|---|---|---|
+| Android (Chrome/Edge/Firefox) | ✅ | Conceder permiso |
+| **iOS / iPadOS 16.4+** | ✅ | **Obligatorio instalarla en la pantalla de inicio** |
+| iOS en pestaña de Safari | ❌ | No existe Web Push ahí, no hay forma de evitarlo |
+| Escritorio | ✅ | Conceder permiso |
+
+> Si en iPhone activas la campana desde una pestaña de Safari, el propio dashboard te explica que primero hay que instalarla. No es un fallo del proyecto: es un límite de la plataforma.
+
+### Detalles que conviene saber
+
+- **El idle lo calcula el servidor**, no el navegador. Si lo calculara el cliente no llegaría ningún aviso con el móvil dormido, que es justo cuando lo quieres.
+- **No te molesta con lo que ya estás viendo**: cada pestaña reporta su visibilidad, y si alguna tiene el dashboard a la vista, se omite la notificación. Con la pantalla apagada o la app en segundo plano, sí llega.
+- **Tocar la notificación abre esa sesión**, no solo la app.
+- Las suscripciones muertas (app desinstalada, permiso revocado) se eliminan solas cuando el servicio de push responde 404/410.
+- El service worker **no cachea nada** a propósito: un caché mal invalidado es la causa número uno de "actualicé y sigue saliendo la versión vieja".
+
+### Si no hay push disponible
+
+No pasa nada: el dashboard sigue funcionando igual y los puntos de estado se actualizan en vivo. Solo pierdes el aviso del sistema cuando la app no está abierta.
+
 ## Autostart al encender el equipo
 
 Ejecuta esto una sola vez después de configurar el dashboard. El script detecta el sistema operativo automáticamente.

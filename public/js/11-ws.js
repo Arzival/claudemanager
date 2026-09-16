@@ -1,8 +1,26 @@
 // 11-ws.js — WebSocket: conexión y dispatcher de todos los mensajes del servidor
 // Script clásico: comparte scope global con los demás; el orden de carga importa.
 // ── WebSocket ─────────────────────────────────────────────────
-const ws = new WebSocket(`ws://${location.host}`);
-ws.addEventListener('open', () => { connEl.textContent='◉ ONLINE'; connEl.classList.add('ok'); startUsagePolling(); });
+// Protocolo relativo al de la página: sobre HTTPS (Tailscale, Cloudflare, un
+// proxy propio…) el navegador BLOQUEA una WebSocket en texto plano por contenido
+// mixto, y sin HTTPS no hay PWA ni notificaciones. Hardcodear ws:// rompe todo
+// eso, así que se deriva de location.protocol.
+const WS_PROTO = location.protocol === 'https:' ? 'wss://' : 'ws://';
+const ws = new WebSocket(`${WS_PROTO}${location.host}`);
+ws.addEventListener('open', () => {
+  connEl.textContent='◉ ONLINE'; connEl.classList.add('ok'); startUsagePolling();
+  reportarPresencia();
+});
+
+// El servidor solo manda notificaciones push cuando NADIE está mirando el
+// dashboard. Para saberlo necesita que cada pestaña reporte su visibilidad.
+function reportarPresencia() {
+  if (ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'presence', visible: document.visibilityState === 'visible' }));
+}
+document.addEventListener('visibilitychange', reportarPresencia);
+window.addEventListener('focus', reportarPresencia);
+window.addEventListener('blur', reportarPresencia);
 
 ws.addEventListener('message', ev => {
   const msg = JSON.parse(ev.data);
