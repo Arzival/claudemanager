@@ -221,6 +221,28 @@ body.movil.hoja #mv-hoja, body.movil.hoja #mv-hoja-fondo { display: flex; }
 .mv-sw input:checked::after { transform: translateX(18px); background: var(--cyan); }
 .mv-sw.oculto { display: none; }
 
+/* Contexto adicional: se oculta para herramientas sin addDirFlag (p. ej. una
+   terminal normal), porque ahí el servidor escribe las rutas como TEXTO en la
+   consola y bash intentaría ejecutarlas. */
+#mv-ctx-wrap.oculto { display: none; }
+#mv-ctx-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+#mv-ctx-chips:empty { margin-bottom: 0; }
+.mv-ctx-chip { display: flex; align-items: center; gap: 7px; padding: 8px 10px;
+  background: rgba(187,154,247,.12); border: 1px solid rgba(187,154,247,.4);
+  color: #d9c8f7; border-radius: 9px; font-size: 12.5px; }
+.mv-ctx-chip b { font-weight: normal; color: #fff; }
+.mv-ctx-chip i { font-style: normal; color: #8f7ab8; font-size: 15px; padding-left: 2px; }
+#mv-ctx-add { width: 100%; padding: 12px; border-radius: 10px; cursor: pointer;
+  background: rgba(0,245,255,.05); border: 1px dashed rgba(0,245,255,.3);
+  color: #7fb8cc; font-size: 13px; font-family: 'Courier New', monospace; }
+#mv-ctx-add:active { background: rgba(0,245,255,.14); }
+/* Cabecera del selector cuando está eligiendo CONTEXTO, no el proyecto principal */
+#mv-ctx-modo { display: none; align-items: center; gap: 8px; margin-bottom: 8px;
+  color: #bb9af7; font-size: 12px; }
+#mv-ctx-modo.on { display: flex; }
+#mv-ctx-modo button { margin-left: auto; background: none; border: 1px solid rgba(187,154,247,.4);
+  color: #bb9af7; border-radius: 7px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+
 #mv-lanzar { width: 100%; margin-top: 22px; padding: 16px; border-radius: 12px;
   background: var(--cyan); color: #04040f; border: none; font-size: 15px;
   font-weight: bold; letter-spacing: 2px; cursor: pointer; font-family: 'Courier New', monospace; }
@@ -249,3 +271,20 @@ body.movil.en-sesion #mv-instalar, body.movil.hoja #mv-instalar { display: none 
   #mv-comp { padding: 5px 8px; }
   #mv-teclas button { height: 26px; }
 }
+
+/* ── Scroll táctil ───────────────────────────────────────── */
+/* El arrastre lo maneja 14-movil.js; aquí solo se evita que el navegador
+   compita con su propio scroll y que el rebote arrastre la página entera. */
+body.movil .panel .xterm-viewport { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+body.movil .panel .xterm-screen { touch-action: pan-y; }
+
+/* Botón flotante para volver al final; solo aparece si te alejaste */
+body.movil #mv-abajo-del-todo { display: none; }
+body.movil.en-sesion.scrolleado #mv-abajo-del-todo {
+  display: block; position: fixed; z-index: 403;
+  right: 14px; bottom: calc(var(--mv-alto-teclas) + 70px + env(safe-area-inset-bottom));
+  width: 42px; height: 42px; border-radius: 50%;
+  background: rgba(9,9,22,.92); border: 1px solid var(--cyan); color: var(--cyan);
+  font-size: 16px; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.6);
+}
+body.movil.escribiendo #mv-abajo-del-todo { display: none !important; }

@@ -99,7 +99,12 @@ function buildPanel(s, lay) {
     cols: s.cols || 80, rows: s.rows || 24,
     allowTransparency: true,
     theme: { ...TERM_THEME },
-    fontSize:13,fontFamily:"'Courier New',monospace",cursorBlink:true,scrollback:2000,
+    fontSize:13,cursorBlink:true,scrollback:2000,
+    // Pila con alternativas REALES por plataforma. Solo 'Courier New' es un
+    // problema en Android, que no la trae: xterm mide el ancho de caracter con
+    // la fuente resuelta y si el sustituto no es monoespaciado calcula mal las
+    // dimensiones. iOS si incluye Courier New, y por eso ahi se veia bien.
+    fontFamily: "'Courier New','DejaVu Sans Mono','Roboto Mono','Droid Sans Mono','Liberation Mono',monospace",
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -108,7 +113,15 @@ function buildPanel(s, lay) {
   term.open(twEl);
   // WebGL renderer: big rendering win with many terminals. Must load after open();
   // fall back to the default DOM renderer if WebGL is unavailable or its context is lost.
+  // En movil NO se usa WebGL. Ahi solo hay una terminal visible a la vez, asi
+  // que su ventaja de rendimiento no aplica, y en varios Android el contexto se
+  // crea pero no pinta nada: no lanza excepcion ni dispara onContextLoss, asi
+  // que el try/catch de abajo no lo detecta y la terminal queda EN BLANCO
+  // aunque los datos lleguen bien. El renderizador DOM es mas lento pero
+  // funciona en todas partes.
+  const sinWebgl = document.body.classList.contains('movil');
   try {
+    if (sinWebgl) throw new Error('movil: se usa el renderizador DOM');
     const webgl = new WebglAddon.WebglAddon();
     webgl.onContextLoss(() => {
       try { webgl.dispose(); } catch {}

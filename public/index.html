@@ -282,6 +282,7 @@
 </div>
 
 <!-- Compositor + teclas que el teclado táctil no tiene -->
+<button id="mv-abajo-del-todo" title="Ir al final">▼</button>
 <div id="mv-abajo">
   <div id="mv-teclas">
     <button data-k="esc">esc</button>
@@ -308,7 +309,8 @@
   <div id="mv-hoja-cuerpo">
     <h3>Nueva sesión</h3>
 
-    <label class="mv-lbl">Proyecto</label>
+    <label class="mv-lbl" id="mv-lbl-proy">Proyecto</label>
+    <div id="mv-ctx-modo">📎 eligiendo contexto — toca para marcar<button id="mv-ctx-fin">listo</button></div>
     <div id="mv-ruta"></div>
     <div id="mv-proyectos"></div>
 
@@ -318,6 +320,12 @@
     <div id="mv-opts">
       <label class="mv-sw" id="mv-sw-resume"><input type="checkbox" id="mv-resume"><span></span>↩ retomar conversación</label>
       <label class="mv-sw" id="mv-sw-skip"><input type="checkbox" id="mv-skip"><span></span>⚡ skip permisos</label>
+    </div>
+
+    <div id="mv-ctx-wrap">
+      <label class="mv-lbl">Contexto adicional</label>
+      <div id="mv-ctx-chips"></div>
+      <button id="mv-ctx-add">📎 agregar proyecto de contexto</button>
     </div>
 
     <button id="mv-lanzar" disabled>LANZAR</button>
@@ -345,5 +353,6 @@
 <script src="js/13-admin.js"></script>
 <script src="js/14-movil.js"></script>
 <script src="js/15-notificaciones.js"></script>
+<script src="js/16-diagnostico.js"></script>
 </body>
 </html>

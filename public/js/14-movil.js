@@ -59,6 +59,64 @@
     });
   }
 
+  // ── Scroll táctil ────────────────────────────────────────────
+  // xterm deja el scroll a un div interno (.xterm-viewport) que con el dedo
+  // apenas responde: la capa .xterm-screen queda encima y se come el gesto.
+  // Aquí se toma el control del arrastre sobre el panel y se traduce a
+  // scrollTop del viewport, con inercia para que se sienta nativo.
+  const conScroll = new WeakSet();
+
+  function habilitarScrollTactil(panel) {
+    if (!panel || conScroll.has(panel)) return;
+    const vp = panel.querySelector('.xterm-viewport');
+    if (!vp) return;
+    conScroll.add(panel);
+
+    let y0 = 0, top0 = 0, yUlt = 0, tUlt = 0, vel = 0, activo = false, anim = null;
+
+    panel.addEventListener('touchstart', e => {
+      if (e.touches.length !== 1) return;
+      if (anim) { cancelAnimationFrame(anim); anim = null; }
+      y0 = yUlt = e.touches[0].clientY;
+      top0 = vp.scrollTop; tUlt = Date.now(); vel = 0; activo = true;
+    }, { passive: true });
+
+    panel.addEventListener('touchmove', e => {
+      if (!activo || e.touches.length !== 1) return;
+      const y = e.touches[0].clientY;
+      const nuevo = top0 - (y - y0);
+      // Solo se intercepta el gesto si de verdad hay a dónde desplazarse; si no,
+      // se deja pasar para no bloquear otros gestos del sistema.
+      const max = vp.scrollHeight - vp.clientHeight;
+      if (max > 0) {
+        vp.scrollTop = Math.max(0, Math.min(max, nuevo));
+        if (e.cancelable) e.preventDefault();
+      }
+      const ahora = Date.now(), dt = ahora - tUlt;
+      if (dt > 0) vel = (yUlt - y) / dt;
+      yUlt = y; tUlt = ahora;
+    }, { passive: false });
+
+    panel.addEventListener('touchend', () => {
+      activo = false;
+      let v = vel * 16;                       // px por frame
+      const max = vp.scrollHeight - vp.clientHeight;
+      (function inercia() {
+        if (Math.abs(v) < 0.4) { anim = null; return; }
+        vp.scrollTop = Math.max(0, Math.min(max, vp.scrollTop + v));
+        v *= 0.93;
+        anim = requestAnimationFrame(inercia);
+      })();
+    }, { passive: true });
+
+    // Botón para volver al final: en una terminal larga, arrastrar hasta abajo
+    // es tedioso.
+    vp.addEventListener('scroll', () => {
+      const alFinal = vp.scrollHeight - vp.scrollTop - vp.clientHeight < 24;
+      document.body.classList.toggle('scrolleado', !alFinal);
+    }, { passive: true });
+  }
+
   // ── Datos de una sesión (se leen del panel que ya existe) ────
   function infoSesion(id) {
     const p = document.querySelector(`.panel[data-id="${id}"]`);
@@ -115,7 +173,11 @@
       history.pushState({ mv: id }, '', '#s=' + encodeURIComponent(id));
 
     refitear(id);
-    setTimeout(() => { try { terms[id].scrollToBottom(); } catch {} }, 60);
+    setTimeout(() => {
+      try { terms[id].scrollToBottom(); } catch {}
+      habilitarScrollTactil(document.querySelector(`.panel[data-id="${id}"]`));
+      document.body.classList.remove('scrolleado');
+    }, 60);
   }
 
   function volver(desdeHistorial) {
@@ -128,6 +190,12 @@
 
   window.addEventListener('popstate', () => {
     if (document.body.classList.contains('en-sesion')) volver(true);
+  });
+
+  $('mv-abajo-del-todo').addEventListener('click', () => {
+    if (!sesionActiva) return;
+    try { terms[sesionActiva].scrollToBottom(); } catch {}
+    document.body.classList.remove('scrolleado');
   });
 
   $('mv-atras').addEventListener('click', () => volver(false));
@@ -195,9 +263,15 @@
 
   // ── Lanzador (hoja inferior) ─────────────────────────────────
   let techSel = null, projSel = null, toolSel = null;
+  // Contexto adicional: ruta → nombre. Se pasa por --add-dir al lanzar, igual
+  // que el "＋ ctx" del tablero de escritorio.
+  const ctxSel = new Map();
+  let modoCtx = false;   // el selector elige contexto en vez del proyecto principal
 
   function abrirHoja() {
     techSel = projSel = null;
+    modoCtx = false;
+    ctxSel.clear();      // el contexto es por lanzamiento, no persiste
     toolSel = (toolsList[0] || {}).id || null;
     document.body.classList.add('hoja');
     if (!projectData.length) ws.send(JSON.stringify({ type: 'projects' }));
@@ -226,7 +300,14 @@
           el.className = 'mv-item';
           el.innerHTML = '<span class="ic">▸</span>';
           el.appendChild(document.createTextNode(`${t.tech}  (${t.projects.length})`));
-          el.addEventListener('click', () => { techSel = t.tech; projSel = null; pintarHoja(); });
+          el.addEventListener('click', () => {
+            techSel = t.tech;
+            // Cambiar de tecnología reinicia la selección principal, PERO no
+            // cuando estás navegando para marcar contexto: ahí el proyecto
+            // principal ya está elegido y debe conservarse.
+            if (!modoCtx) projSel = null;
+            pintarHoja();
+          });
           lista.appendChild(el);
         });
       }
@@ -244,11 +325,23 @@
         v.className = 'mv-item'; v.textContent = 'Carpeta vacía';
         lista.appendChild(v);
       } else t.projects.forEach(p => {
+        const esPrincipal = projSel && projSel.path === p.path;
+        const enCtx = ctxSel.has(p.path);
         const el = document.createElement('div');
-        el.className = 'mv-item' + (projSel && projSel.path === p.path ? ' sel' : '');
-        el.innerHTML = '<span class="ic">■</span>';
+        el.className = 'mv-item' + ((modoCtx ? enCtx : esPrincipal) ? ' sel' : '');
+        el.innerHTML = `<span class="ic">${modoCtx ? (enCtx ? '📎' : '□') : '■'}</span>`;
         el.appendChild(document.createTextNode(p.name));
-        el.addEventListener('click', () => { projSel = p; pintarHoja(); });
+        el.addEventListener('click', () => {
+          if (modoCtx) {
+            // El proyecto principal no puede ser además su propio contexto.
+            if (projSel && projSel.path === p.path) return;
+            if (enCtx) ctxSel.delete(p.path); else ctxSel.set(p.path, p.name);
+          } else {
+            projSel = p;
+            ctxSel.delete(p.path);   // si estaba como contexto, deja de estarlo
+          }
+          pintarHoja();
+        });
         lista.appendChild(el);
       });
     }
@@ -269,8 +362,42 @@
     $('mv-sw-resume').classList.toggle('oculto', !(tool && tool.resumeFlag));
     $('mv-sw-skip').classList.toggle('oculto', !(tool && tool.skipPermsFlag));
 
+    // Contexto: solo para herramientas que lo aceptan por flag. Sin addDirFlag
+    // el servidor escribe las rutas como texto en la consola, y en una terminal
+    // normal bash intentaría ejecutarlas.
+    const aceptaCtx = !!(tool && tool.addDirFlag);
+    $('mv-ctx-wrap').classList.toggle('oculto', !aceptaCtx || !projSel);
+    if (!aceptaCtx && ctxSel.size) { ctxSel.clear(); modoCtx = false; }
+
+    $('mv-ctx-modo').classList.toggle('on', modoCtx);
+    $('mv-lbl-proy').textContent = modoCtx ? 'Elige proyectos de contexto' : 'Proyecto';
+
+    const chips = $('mv-ctx-chips');
+    chips.innerHTML = '';
+    ctxSel.forEach((nombre, ruta) => {
+      const c = document.createElement('span');
+      c.className = 'mv-ctx-chip';
+      c.innerHTML = '📎 <b></b><i>✕</i>';
+      c.querySelector('b').textContent = nombre;
+      c.addEventListener('click', () => { ctxSel.delete(ruta); pintarHoja(); });
+      chips.appendChild(c);
+    });
+    $('mv-ctx-add').textContent = ctxSel.size
+      ? '📎 agregar otro proyecto de contexto'
+      : '📎 agregar proyecto de contexto';
+
     $('mv-lanzar').disabled = !(projSel && toolSel);
+    $('mv-lanzar').textContent = ctxSel.size ? `LANZAR + ${ctxSel.size} ctx` : 'LANZAR';
   }
+
+  // Entrar/salir del modo de selección de contexto
+  $('mv-ctx-add').addEventListener('click', () => {
+    modoCtx = true;
+    techSel = null;          // vuelve a la raíz para poder navegar a otra tecnología
+    pintarHoja();
+    $('mv-proyectos').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  $('mv-ctx-fin').addEventListener('click', () => { modoCtx = false; pintarHoja(); });
 
   $('mv-lanzar').addEventListener('click', () => {
     if (!projSel || !toolSel) return;
@@ -286,7 +413,9 @@
       toolId: toolSel,
       resume: !!(tool && tool.resumeFlag) && $('mv-resume').checked,
       dangerousSkip: !!(tool && tool.skipPermsFlag) && $('mv-skip').checked,
-      contextPaths: [],
+      // Mismo criterio que el tablero: el proyecto principal nunca va también
+      // como contexto.
+      contextPaths: [...ctxSel.keys()].filter(p => p !== projSel.path),
       cols, rows,
     }));
     cerrarHoja();
