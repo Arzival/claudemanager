@@ -35,6 +35,7 @@
     <div class="hitem"><span class="hlabel">NET</span><span id="conn">◉ OFFLINE</span></div>
     <div class="hitem"><span id="clock"></span></div>
     <button class="hbtn" id="btn-open">＋ OPEN PROJECT</button>
+    <button class="hbtn" id="btn-stats" title="Consumo histórico: tokens, modelos y valor API equivalente">📊 STATS</button>
     <button class="hbtn" id="btn-cmds" title="Historial de comandos: buscar, editar y borrar">⌨ CMDS</button>
     <button class="hbtn y" id="btn-cfg">⚙ CONFIG</button>
     <button class="hbtn r" id="btn-restart" title="Reinicia el servicio completo (las sesiones se relanzan y pierden su pantalla)">⟳</button>
@@ -67,6 +68,59 @@
   <button id="sb-mic" title="Mantén presionado para dictar (o mantén F9): «nombre, tu mensaje»">🎙</button>
   <button id="sb-refresh" title="Actualizar consumo ahora">⟳</button>
 </div>
+<!-- STATS — consumo histórico a pantalla completa -->
+<div id="stats-view">
+  <aside class="st-rail">
+    <div class="st-rail-hdr">📊 CONSUMO</div>
+    <div class="st-grp">PERIODO</div>
+    <div class="st-seg" data-k="period">
+      <button data-v="day">Hoy</button><button data-v="week">Semana</button>
+      <button data-v="month">Mes</button><button data-v="all">Todo</button>
+    </div>
+    <div class="st-grp">PROVEEDOR</div>
+    <div class="st-seg" data-k="provider">
+      <button data-v="all">Todos</button><button data-v="claude">Claude</button><button data-v="codex">Codex</button>
+    </div>
+    <div class="st-grp">PROYECTO</div>
+    <select id="st-project"></select>
+    <div class="st-rail-foot">
+      <button class="st-btn" id="st-prices">⚙ precios</button>
+      <button class="st-btn" id="st-refresh" title="Releer el historial">⟳</button>
+      <button class="st-btn st-close" id="st-close" title="Cerrar (Esc)">✕</button>
+    </div>
+  </aside>
+  <main class="st-main">
+    <section class="st-card st-hero" id="st-hero"></section>
+    <section class="st-card">
+      <div class="st-card-hdr"><span id="st-chart-title">TOKENS</span><span class="st-legend" id="st-legend"></span></div>
+      <div class="st-chart" id="st-chart"></div>
+    </section>
+    <div class="st-prov" id="st-prov"></div>
+    <section class="st-card">
+      <div class="st-card-hdr"><span>MODELOS</span><span class="st-dim">clic en el encabezado ordena</span></div>
+      <div class="st-table-wrap"><table class="st-table" id="st-table"></table></div>
+    </section>
+  </main>
+  <aside class="st-side">
+    <section class="st-card st-save" id="st-save"></section>
+    <section class="st-card st-act">
+      <div class="st-card-hdr"><span>ACTIVIDAD</span><span class="st-dim">por proyecto</span></div>
+      <div id="st-activity"></div>
+    </section>
+  </aside>
+  <div class="st-tip" id="st-tip"></div>
+  <div class="st-loading" id="st-loading">indexando historial…</div>
+  <!-- Editor de precios -->
+  <div class="st-prices" id="st-prices-panel">
+    <div class="st-card-hdr"><span>PRECIOS · USD por millón de tokens</span>
+      <button class="st-btn" id="st-prices-close">✕</button></div>
+    <div class="st-dim st-prices-note">Claude: tarifas oficiales de la API (editables). Modelos sin precio no suman al costo.</div>
+    <div class="st-table-wrap"><table class="st-table" id="st-prices-table"></table></div>
+    <div class="st-prices-subs" id="st-prices-subs"></div>
+    <div class="st-prices-actions"><button class="st-btn st-primary" id="st-prices-save">Guardar</button></div>
+  </div>
+</div>
+
 <!-- Gestor del historial de comandos -->
 <div class="mo" id="cmds-overlay">
   <div class="mbox" id="cmds-modal">
@@ -351,6 +405,7 @@
 <script src="js/11-ws.js"></script>
 <script src="js/12-spawn.js"></script>
 <script src="js/13-admin.js"></script>
+<script src="js/14-stats.js"></script>
 <script src="js/14-movil.js"></script>
 <script src="js/15-notificaciones.js"></script>
 <script src="js/16-diagnostico.js"></script>

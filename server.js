@@ -60,6 +60,45 @@ if (!fs.existsSync(CONFIG_FILE)) {
 
 let config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
 
+// ── STATS: historial de consumo + precios para el "valor API equivalente" ─
+const stats = require('./lib/stats');
+stats.init(DATA_DIR);
+
+// Precios por millón de tokens (USD). Claude: tarifas oficiales de la API
+// verificadas el 2026-10-06 — cache write 5m = 1.25× input, 1h = 2× input,
+// cache read = 0.1× input salvo donde el modelo tiene tarifa propia. Los
+// modelos de Codex/OpenAI no traen precio por default: se capturan en la
+// sección STATS (sin precio = no suman al costo, en vez de inventar cifras).
+// Todo es editable y lo guardado en config.pricing tiene prioridad.
+const DEFAULT_PRICING = (() => {
+  const m = (inp, out, read) => ({ in: inp, out, cr: read ?? +(inp * 0.1).toFixed(4), cw5: inp * 1.25, cw1: inp * 2 });
+  return {
+    models: {
+      'claude-fable-5-1':  m(10, 50, 0.25),
+      'claude-fable-5':    m(10, 50),
+      'claude-opus-5-5':   m(4, 20, 0.20),
+      'claude-opus-5':     m(5, 25),
+      'claude-opus-4-8':   m(5, 25),
+      'claude-opus-4-7':   m(5, 25),
+      'claude-opus-4-6':   m(5, 25),
+      'claude-sonnet-5-5': m(2, 10, 0.20),
+      'claude-sonnet-5':   m(2, 10),
+      'claude-sonnet-4-6': m(3, 15),
+      'claude-haiku-4-5':  m(1, 5),
+    },
+    // Lo que pagas por suscripción al mes (USD), para la tarjeta de ahorro
+    subscriptions: { claude: 100, codex: 20 },
+  };
+})();
+
+function pricingFor() {
+  const saved = config.pricing || {};
+  return {
+    models: { ...DEFAULT_PRICING.models, ...(saved.models || {}) },
+    subscriptions: { ...DEFAULT_PRICING.subscriptions, ...(saved.subscriptions || {}) },
+  };
+}
+
 function saveConfig() {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
 }
@@ -1608,6 +1647,38 @@ wss.on('connection', (ws) => {
       broadcast({ type: 'restarting' });
       if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveConfig(); }
       setTimeout(() => process.exit(0), 300); // deja salir el broadcast
+
+    } else if (type === 'stats') {
+      // Pasada incremental del historial y envío de los buckets por hora
+      const t0 = Date.now();
+      stats.refresh().then(() => {
+        if (ws.readyState !== 1) return;
+        ws.send(JSON.stringify({ type: 'stats', hours: stats.snapshot(), pricing: pricingFor(),
+          scanMs: Date.now() - t0 }));
+      });
+
+    } else if (type === 'save-pricing') {
+      // Solo se guarda lo que difiere del default — así futuras correcciones
+      // de precios oficiales llegan a quien nunca los editó
+      const p = msg.pricing || {};
+      const models = {};
+      for (const [k, v] of Object.entries(p.models || {})) {
+        if (!v || typeof v !== 'object') continue;
+        const clean = {};
+        for (const f of ['in', 'out', 'cr', 'cw5', 'cw1']) {
+          const n = parseFloat(v[f]);
+          if (!isNaN(n) && n >= 0) clean[f] = n;
+        }
+        if (JSON.stringify(clean) !== JSON.stringify(DEFAULT_PRICING.models[k] || null)) models[k] = clean;
+      }
+      const subs = {};
+      for (const [k, v] of Object.entries(p.subscriptions || {})) {
+        const n = parseFloat(v);
+        if (!isNaN(n) && n >= 0) subs[k] = n;
+      }
+      config.pricing = { models, subscriptions: subs };
+      saveConfig();
+      broadcast({ type: 'pricing', pricing: pricingFor() });
 
     } else if (type === 'watch-response') {
       startResponseWatch(ws, sessionId);
