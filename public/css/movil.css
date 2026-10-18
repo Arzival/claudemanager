@@ -17,7 +17,7 @@
 }
 
 /* Piezas móviles: ocultas por defecto (escritorio) */
-#mv-lista, #mv-top, #mv-abajo, #mv-hoja, #mv-hoja-fondo, #mv-instalar { display: none; }
+#mv-lista, #mv-top, #mv-abajo, #mv-abajo-del-todo, #mv-hoja, #mv-hoja-fondo, #mv-instalar { display: none; }
 
 /* ═══════════════════════════════════════════════════════════
    MODO MÓVIL
