@@ -16,30 +16,45 @@ function updateCanvasHeight() {
   canvas.style.width = Math.max(gridWrap.clientWidth, maxRight + 20) + 'px';
 }
 
-// ── Default layout ────────────────────────────────────────────
-// Returns { l, t, w, h } as fractions 0..1 of the VIEWPORT
+// ── Layout absoluto ───────────────────────────────────────────
+// Las medidas de los paneles son ABSOLUTAS (px): una consola mide lo mismo
+// en cualquier pantalla y el tablero hace scroll si no cabe. El formato
+// viejo (fracciones l/t/w/h del viewport) se convierte con la pantalla
+// actual la primera vez — ver migrateLayoutsToPx en 02-workspaces.js.
+function layToPx(lay) {
+  if (!lay) return null;
+  if ('x' in lay) return lay; // ya es absoluto
+  const W = gridWrap.clientWidth, H = gridWrap.clientHeight;
+  return { x: Math.round(lay.l * W), y: Math.round(lay.t * H), w: Math.round(lay.w * W), h: Math.round(lay.h * H) };
+}
+// Tamaño de una consola nueva: 45% de la pantalla donde se crea, y de ahí fijo
+function newPanelSize() {
+  return { w: Math.round(0.45 * gridWrap.clientWidth), h: Math.round(0.45 * gridWrap.clientHeight) };
+}
+
+// Reparto proporcional SOLO para el arranque inicial sin layout guardado
 function defaultLayout(idx, total) {
   const G = 0.008;
-  if (total === 1) return { l:G, t:G, w:1-2*G, h:1-2*G };
+  if (total === 1) return layToPx({ l:G, t:G, w:1-2*G, h:1-2*G });
   const cols = total <= 2 ? 2 : total <= 4 ? 2 : 3;
   const rows = Math.ceil(total / cols);
   const ci = idx % cols, ri = Math.floor(idx / cols);
   const w = 1/cols - G*1.5, h = 1/rows - G*1.5;
   const l = ci*(1/cols) + G*0.75, t = ri*(1/rows) + G*0.75;
-  return { l, t, w, h };
+  return layToPx({ l, t, w, h });
 }
 
-// ── Apply position from fractions of viewport ─────────────────
+// ── Apply absolute position (px) ─────────────────────────────
 function applyLayout(panel, lay) {
-  const W = gridWrap.clientWidth, H = gridWrap.clientHeight;
-  panel.style.left   = (lay.l * W) + 'px';
-  panel.style.top    = (lay.t * H) + 'px';
-  panel.style.width  = (lay.w * W) + 'px';
-  panel.style.height = (lay.h * H) + 'px';
+  const p = layToPx(lay);
+  panel.style.left   = p.x + 'px';
+  panel.style.top    = p.y + 'px';
+  panel.style.width  = Math.max(200, p.w) + 'px';
+  panel.style.height = Math.max(120, p.h) + 'px';
 }
 
-// ── Snap to 1% grid ───────────────────────────────────────────
-function snap(v) { return Math.round(v * 100) / 100; }
+// ── Snap to 10px grid ─────────────────────────────────────────
+function snap(v) { return Math.round(v / 10) * 10; }
 
 // ── Refit ─────────────────────────────────────────────────────
 function scheduleRefit() {
@@ -91,22 +106,21 @@ function initDragMove(panel, header) {
 function initResizeHandle(panel, rh, dirs) {
   rh.addEventListener('mousedown', e => {
     e.preventDefault(); e.stopPropagation(); raise(panel);
-    const W = gridWrap.clientWidth, H = gridWrap.clientHeight;
     const sx = e.clientX, sy = e.clientY;
     const sl = parseFloat(panel.style.left), st = parseFloat(panel.style.top);
     const sw = parseFloat(panel.style.width), sh = parseFloat(panel.style.height);
 
     function onMove(e) {
       const dx = e.clientX - sx, dy = e.clientY - sy;
-      if (dirs.includes('r')) panel.style.width  = Math.max(200, snap((sw+dx)/W)*W) + 'px';
-      if (dirs.includes('b')) panel.style.height = Math.max(120, snap((sh+dy)/H)*H) + 'px';
+      if (dirs.includes('r')) panel.style.width  = Math.max(200, snap(sw+dx)) + 'px';
+      if (dirs.includes('b')) panel.style.height = Math.max(120, snap(sh+dy)) + 'px';
       if (dirs.includes('l')) {
-        const newW = Math.max(200, snap((sw-dx)/W)*W);
+        const newW = Math.max(200, snap(sw-dx));
         panel.style.left  = (sl + sw - newW) + 'px';
         panel.style.width = newW + 'px';
       }
       if (dirs.includes('t')) {
-        const newH = Math.max(120, snap((sh-dy)/H)*H);
+        const newH = Math.max(120, snap(sh-dy));
         panel.style.top    = (st + sh - newH) + 'px';
         panel.style.height = newH + 'px';
       }

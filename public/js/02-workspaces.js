@@ -53,19 +53,31 @@ function applyWorkspaceBg(bgName) {
 function applyWorkspaceTheme() { applyWorkspaceBg(); applyAllTermOpacity(); }
 
 function snapshotLayout() {
-  const W = gridWrap.clientWidth, H = gridWrap.clientHeight;
   const layout = {};
   canvas.querySelectorAll('.panel').forEach(p => {
     if (!p.dataset.hidden) {
       layout[p.dataset.id] = {
-        l: parseFloat(p.style.left)  / W,
-        t: parseFloat(p.style.top)   / H,
-        w: parseFloat(p.style.width) / W,
-        h: parseFloat(p.style.height)/ H,
+        x: Math.round(parseFloat(p.style.left)),
+        y: Math.round(parseFloat(p.style.top)),
+        w: Math.round(parseFloat(p.style.width)),
+        h: Math.round(parseFloat(p.style.height)),
       };
     }
   });
   return layout;
+}
+
+// Migración única del formato viejo (fracciones del viewport) a px: se
+// congela con la pantalla en la que se abre el dashboard tras actualizar.
+function migrateLayoutsToPx() {
+  if (!gridWrap.clientWidth || !gridWrap.clientHeight) return;
+  let changed = false;
+  for (const ws of Object.values(wsStore.workspaces)) {
+    for (const [id, lay] of Object.entries(ws.layout || {})) {
+      if (lay && !('x' in lay)) { ws.layout[id] = layToPx(lay); changed = true; }
+    }
+  }
+  if (changed) saveWsStore();
 }
 
 function visiblePanelIds() {
@@ -111,18 +123,12 @@ function restoreWsScroll() {
 function applyWorkspace(name) {
   const ws = wsStore.workspaces[name];
   if (!ws) return;
-  const W = gridWrap.clientWidth, H = gridWrap.clientHeight;
   canvas.querySelectorAll('.panel').forEach(p => {
     const id = p.dataset.id;
     if (ws.panelIds.includes(id)) {
       delete p.dataset.hidden;
       p.style.visibility = ''; p.style.pointerEvents = '';
-      if (ws.layout[id]) {
-        p.style.left   = (ws.layout[id].l * W) + 'px';
-        p.style.top    = (ws.layout[id].t * H) + 'px';
-        p.style.width  = (ws.layout[id].w * W) + 'px';
-        p.style.height = (ws.layout[id].h * H) + 'px';
-      }
+      if (ws.layout[id]) applyLayout(p, ws.layout[id]);
       setTimeout(() => { debouncedFit(id, 0); try { terms[id]?.scrollToBottom(); } catch {}; }, 80);
     } else {
       p.dataset.hidden = '1';

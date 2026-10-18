@@ -2,7 +2,7 @@
 // un menú con tus proyectos y la consola nace con su esquina en el cursor.
 // Script clásico: comparte scope global con los demás; el orden de carga importa.
 
-let spawnPos = null;    // { l, t } en fracciones — posición del próximo panel
+let spawnPos = null;    // { x, y } en px — posición del próximo panel
 let spawnMenuEl = null;
 
 // Preferencias del lanzamiento rápido (mismas opciones que el picker grande)
@@ -88,8 +88,8 @@ gridWrap.addEventListener('contextmenu', e => {
   // El futuro panel nace con su esquina donde está el cursor (incluye scroll)
   const r = gridWrap.getBoundingClientRect();
   spawnPos = {
-    l: Math.max(0, (e.clientX - r.left + gridWrap.scrollLeft) / gridWrap.clientWidth),
-    t: Math.max(0, (e.clientY - r.top + gridWrap.scrollTop) / gridWrap.clientHeight),
+    x: Math.max(0, Math.round(e.clientX - r.left + gridWrap.scrollLeft)),
+    y: Math.max(0, Math.round(e.clientY - r.top + gridWrap.scrollTop)),
   };
   const m = document.createElement('div');
   m.id = 'spawn-menu';

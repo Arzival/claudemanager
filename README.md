@@ -112,6 +112,8 @@ Los paneles se comportan como ventanas independientes:
 
 El layout se guarda automáticamente en `localStorage` — al recargar o reiniciar el servidor los paneles aparecen exactamente donde los dejaste.
 
+**Las medidas son absolutas (píxeles).** Una consola mide lo mismo en cualquier pantalla: si cambias a un monitor más chico no se encoge, el tablero crece y aparece scroll (horizontal y vertical) para llegar a lo que no cabe. Una consola nueva nace con el 45% de la pantalla donde la creas y desde ese momento queda fija. Al actualizar desde una versión anterior, los layouts guardados (que eran porcentajes) se convierten una sola vez con la pantalla en la que abras el dashboard — ábrelo primero en el monitor donde quieres que queden.
+
 ## Dentro de cada terminal
 
 | Acción | Cómo |

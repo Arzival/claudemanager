@@ -48,6 +48,7 @@ ws.addEventListener('message', ev => {
       delete terms[id]; delete fits[id];
     });
     canvas.innerHTML=''; panelCount=0; zTop=10;
+    migrateLayoutsToPx(); // layouts viejos en % → px, congelados en esta pantalla
     msg.sessions.forEach((s, i) => {
       statuses[s.id]=s.status;
       buildPanel(s, defaultLayout(i, msg.sessions.length));
@@ -90,9 +91,11 @@ ws.addEventListener('message', ev => {
     const total = canvas.querySelectorAll('.panel').length + 1;
     const offset = (total % 5) * 0.03;
     // Lanzamiento rápido con clic derecho: el panel nace donde estaba el cursor
+    const size = newPanelSize();
     const lay = spawnPos
-      ? { l: spawnPos.l, t: spawnPos.t, w: 0.45, h: 0.45 }
-      : { l: 0.1 + offset, t: 0.1 + offset, w: 0.45, h: 0.45 };
+      ? { x: spawnPos.x, y: spawnPos.y, ...size }
+      : { x: Math.round((0.1 + offset) * gridWrap.clientWidth),
+          y: Math.round((0.1 + offset) * gridWrap.clientHeight), ...size };
     spawnPos = null;
     buildPanel(msg.session, lay);
     // Add to active workspace
@@ -274,6 +277,12 @@ ws.addEventListener('message', ev => {
   } else if (msg.type === 'backgrounds') {
     backgrounds = msg.files || [];
     if (bgOv.classList.contains('open')) renderBgGrid();
+
+  } else if (msg.type === 'stats') {
+    statsOnData(msg);
+
+  } else if (msg.type === 'pricing') {
+    statsOnPricing(msg.pricing);
 
   } else if (msg.type === 'cmd-cleared') {
     vToast(`🧹 ${msg.removed} comando(s) de un solo uso borrados`);
