@@ -278,6 +278,9 @@ ws.addEventListener('message', ev => {
     backgrounds = msg.files || [];
     if (bgOv.classList.contains('open')) renderBgGrid();
 
+  } else if (msg.type === 'ws-store') {
+    applyServerWsStore(msg.store); // llega antes de 'sessions', que construye los paneles con él
+
   } else if (msg.type === 'stats') {
     statsOnData(msg);
 

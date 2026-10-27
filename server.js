@@ -60,6 +60,33 @@ if (!fs.existsSync(CONFIG_FILE)) {
 
 let config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
 
+// ── Workspaces en el servidor ────────────────────────────────
+// Los workspaces (pestañas, qué consola va en cuál, posiciones, fondos) vivían
+// en localStorage, o sea por navegador. Aquí son la fuente de verdad para
+// cualquier navegador o dispositivo; el cliente conserva localStorage solo
+// como caché y como origen de la migración inicial.
+const WS_STORE_FILE = path.join(DATA_DIR, 'workspaces.json');
+let wsStoreSrv = null;
+try {
+  const j = JSON.parse(fs.readFileSync(WS_STORE_FILE, 'utf8'));
+  if (j && typeof j.workspaces === 'object') wsStoreSrv = j;
+} catch {}
+let wsStoreTimer = null;
+function saveWsStoreSrv(store) {
+  const incoming = store && typeof store.workspaces === 'object' ? store : null;
+  if (!incoming) return false;
+  // Un navegador recién abierto (sin workspaces) nunca pisa lo ya guardado
+  if (!Object.keys(incoming.workspaces).length && wsStoreSrv && Object.keys(wsStoreSrv.workspaces).length) return false;
+  wsStoreSrv = { workspaces: incoming.workspaces, active: incoming.active || null };
+  clearTimeout(wsStoreTimer);
+  wsStoreTimer = setTimeout(() => {
+    const tmp = WS_STORE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(wsStoreSrv));
+    fs.renameSync(tmp, WS_STORE_FILE);
+  }, 300);
+  return true;
+}
+
 // ── STATS: historial de consumo + precios para el "valor API equivalente" ─
 const stats = require('./lib/stats');
 stats.init(DATA_DIR);
@@ -1375,6 +1402,7 @@ wss.on('connection', (ws) => {
     backgrounds: listBackgrounds(),
   }));
 
+  ws.send(JSON.stringify({ type: 'ws-store', store: wsStoreSrv })); // antes de 'sessions': el cliente lo pide después
   if (commands.length) ws.send(JSON.stringify({ type: 'cmd-log', commands }));
   ws.send(JSON.stringify({ type: 'tts-catalog', voices: ttsCatalog() }));
   if (updateResult) ws.send(JSON.stringify({ type: 'update-result', ...updateResult }));
@@ -1656,6 +1684,9 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'stats', hours: stats.snapshot(), pricing: pricingFor(),
           scanMs: Date.now() - t0 }));
       });
+
+    } else if (type === 'save-ws-store') {
+      saveWsStoreSrv(msg.store);
 
     } else if (type === 'save-pricing') {
       // Solo se guarda lo que difiere del default — así futuras correcciones

@@ -9,8 +9,27 @@ function loadWsStore() {
   catch { wsStore = { workspaces: {}, active: null }; }
 }
 
+// Guarda en localStorage (caché) y en el servidor (fuente de verdad para
+// cualquier navegador o dispositivo), con un pequeño debounce.
+let wsPushTimer = null;
 function saveWsStore() {
   localStorage.setItem(WS_KEY, JSON.stringify(wsStore));
+  clearTimeout(wsPushTimer);
+  wsPushTimer = setTimeout(() => {
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'save-ws-store', store: wsStore }));
+  }, 300);
+}
+
+// Al conectar: lo del servidor manda. Si el servidor aún no tiene nada y este
+// navegador sí (p. ej. Opera GX con todo configurado), se sube — migración única.
+function applyServerWsStore(store) {
+  const srvHas = store && store.workspaces && Object.keys(store.workspaces).length;
+  if (srvHas) {
+    wsStore = { workspaces: store.workspaces, active: store.active || Object.keys(store.workspaces)[0] };
+    localStorage.setItem(WS_KEY, JSON.stringify(wsStore));
+  } else if (Object.keys(wsStore.workspaces).length) {
+    saveWsStore();
+  }
 }
 
 // Merge fields into a workspace WITHOUT dropping its bg / opacity settings
