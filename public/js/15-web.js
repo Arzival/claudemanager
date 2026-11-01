@@ -130,12 +130,26 @@ const LIVE_BUTTONS = ['left', 'middle', 'right'];
 function liveMods(e) { return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0); }
 function liveInput(el, id) {
   const send = (type, extra) => ws.send(JSON.stringify({ type, sessionId: id, ...extra }));
-  const point = e => { const r = el.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; };
+  // La imagen se dibuja con object-fit: contain; el punto se mide sobre la
+  // imagen real (no la caja), así nunca se desfasa aunque cambie el aspecto.
+  const img = el.querySelector('.lw-frame');
+  const clamp = v => Math.min(1, Math.max(0, v));
+  const point = e => {
+    const r = el.getBoundingClientRect();
+    let { left, top, width, height } = r;
+    if (img.naturalWidth && img.naturalHeight) {
+      const s = Math.min(r.width / img.naturalWidth, r.height / img.naturalHeight);
+      width = img.naturalWidth * s; height = img.naturalHeight * s;
+      left = r.left + (r.width - width) / 2; top = r.top + (r.height - height) / 2;
+    }
+    return { x: clamp((e.clientX - left) / width), y: clamp((e.clientY - top) / height) };
+  };
   const pressed = e => (e.buttons & 1 ? 'left' : e.buttons & 4 ? 'middle' : e.buttons & 2 ? 'right' : 'none');
   const mouse = (type, e, extra) => send('live-mouse', { event: { type, ...point(e), buttons: e.buttons, modifiers: liveMods(e), ...extra } });
   let frame = 0;
   el.addEventListener('pointerdown', e => {
     el.focus(); try { el.setPointerCapture(e.pointerId); } catch {}
+    if (webPanels[id]?.status === 'sleeping') liveRequest(id, 0);
     mouse('mousePressed', e, { button: LIVE_BUTTONS[e.button] || 'left', clickCount: e.detail || 1 });
   });
   el.addEventListener('pointerup', e => mouse('mouseReleased', e, { button: LIVE_BUTTONS[e.button] || 'left', clickCount: e.detail || 1 }));
@@ -183,6 +197,10 @@ function liveOnStatus(msg) {
   W.status = msg.state;
   if (msg.url && /^https?:/.test(msg.url)) { W.ext.href = msg.url; W.urlEl.textContent = msg.url; W.urlEl.title = msg.url; }
   if (msg.state === 'ready') { W.notice.style.display = 'none'; return; }
+  if (msg.state === 'sleeping') { // si se ve, se despierta solo (otro cliente pudo dormirlo)
+    const panel = W.el.closest('.panel');
+    if (!panel.dataset.hidden && document.visibilityState === 'visible') liveRequest(msg.sessionId, 400);
+  }
   W.notice.style.display = 'flex';
   W.notice.textContent = (LIVE_TEXT[msg.state] || msg.state) + (msg.error ? ': ' + msg.error : '');
 }

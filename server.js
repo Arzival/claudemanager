@@ -94,6 +94,10 @@ const liveMgr = new LiveManager({
   send: (ws, m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); },
 });
 
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { // guarda logins de paneles web antes de morir
+  Promise.race([liveMgr.shutdown(), new Promise(r => setTimeout(r, 3000))]).finally(() => process.exit(0));
+});
+
 // ── STATS: historial de consumo + precios para el "valor API equivalente" ─
 const stats = require('./lib/stats');
 stats.init(DATA_DIR);

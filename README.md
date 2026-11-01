@@ -139,8 +139,8 @@ Un panel web es un **navegador real** dentro del dashboard: ahí entras a claude
 No es un iframe (claude.ai y ChatGPT los prohíben y las cookies no funcionarían): el servidor corre **un solo Chromium headless** y manda la imagen al dashboard por WebSocket (screencast JPEG vía Chrome DevTools Protocol), devolviendo tus clics y teclas. Por eso funciona desde cualquier navegador y desde el móvil.
 
 - Cada panel es una pestaña aislada del mismo Chromium: ~100–150 MB cada una en vez de ~400 MB por navegador separado.
-- Solo se transmite imagen del panel **visible**; los paneles de workspaces ocultos no mandan nada.
-- Un panel que lleva **15 min sin verse se duerme** (se cierra su pestaña, memoria casi cero) y se despierta solo en ~3 s al mostrarlo, con el login intacto. Ajustable con `LIVE_SLEEP_MINUTES` en el entorno del servicio.
+- Solo se transmite imagen del panel **visible**; los paneles de workspaces ocultos no mandan nada. Varios navegadores (Mac + móvil, dos pestañas) pueden ver el mismo panel a la vez; la imagen sigue al último que lo mostró y el ratón se mapea sobre la imagen real, así que nunca se desfasa.
+- Un panel que lleva **15 min sin verse se duerme** (se cierra su pestaña, memoria casi cero) y se despierta solo en ~3 s al mostrarlo (o al hacer clic encima), con el login intacto. Solo duerme si **nadie** lo está viendo. Ajustable con `LIVE_SLEEP_MINUTES` en el entorno del servicio.
 - Dentro del Chromium se bloquean vídeos y fuentes externas.
 
 ### Requisito: un Chrome/Chromium en la máquina
