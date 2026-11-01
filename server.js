@@ -1494,7 +1494,7 @@ wss.on('connection', (ws) => {
       const folderPath = path.join(config.projectsRoot, tech, name.trim());
       try {
         fs.mkdirSync(folderPath, { recursive: true });
-        ws.send(JSON.stringify({ type: 'projects', data: scanProjects() }));
+        broadcast({ type: 'projects', data: scanProjects() }); // todos los navegadores ven la carpeta nueva
         ws.send(JSON.stringify({ type: 'folder-created', tech, name: name.trim() }));
       } catch (err) {
         ws.send(JSON.stringify({ type: 'error', msg: err.message }));

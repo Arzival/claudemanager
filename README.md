@@ -73,6 +73,8 @@ En el picker de proyectos, al seleccionar una tecnología aparece el botón **�
 
 Las carpetas creadas externamente (Finder, terminal) se detectan automáticamente la próxima vez que abres el picker.
 
+- También desde el **menú de clic derecho**: al final de cada tecnología hay **＋ nueva carpeta en …**; la carpeta aparece al instante en el menú y en todos los navegadores abiertos. El menú rápido vuelve a escanear las carpetas cada vez que se abre, así que lo que crees desde Finder o una terminal también sale.
+
 ## Workspaces
 
 Agrupa tus paneles en workspaces con nombre, como si fueran perfiles de trabajo:

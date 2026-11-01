@@ -61,7 +61,8 @@ function renderSpawnMenu() {
           t.projects.map(p =>
             `<div class="vm-item sp-proj ${spawnCtx.has(p.path) ? 'sp-ctx-on' : ''}" data-path="${escHtml(p.path)}" data-name="${escHtml(p.name)}">` +
             `${spawnCtx.has(p.path) ? '📎 ' : ''}${escHtml(p.name)}</div>`
-          ).join('')
+          ).join('') +
+          `<div class="vm-item sp-newdir" data-tech="${escHtml(t.tech)}">＋ nueva carpeta en ${escHtml(t.tech)}…</div>`
         ).join(''));
 }
 
@@ -102,7 +103,7 @@ gridWrap.addEventListener('contextmenu', e => {
   spawnMenuEl = m;
   spawnCtx.clear(); // el contexto marcado es por lanzamiento, no persiste
   renderSpawnMenu();
-  if (!projectData.length) ws.send(JSON.stringify({ type: 'projects' })); // se repinta al llegar
+  ws.send(JSON.stringify({ type: 'projects' })); // siempre fresco — se repinta al llegar la lista
   // Clic derecho sobre un proyecto = marcar/desmarcar como contexto (--add-dir)
   m.addEventListener('contextmenu', ev => {
     ev.preventDefault();
@@ -125,6 +126,13 @@ gridWrap.addEventListener('contextmenu', e => {
     if (opt) { // toggle de opción — el menú sigue abierto
       spawnPrefs[opt.dataset.o] = !spawnPrefs[opt.dataset.o];
       renderSpawnMenu();
+      return;
+    }
+    const nd = ev.target.closest('.sp-newdir');
+    if (nd) { // crea la carpeta; la lista llega fresca y el menú se repinta con ella
+      const name = prompt(`Nueva carpeta en ${nd.dataset.tech}:`);
+      if (!name || !name.trim()) return;
+      ws.send(JSON.stringify({ type: 'create-folder', tech: nd.dataset.tech, name: name.trim() }));
       return;
     }
     const web = ev.target.closest('.sp-web');

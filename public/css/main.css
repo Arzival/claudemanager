@@ -577,3 +577,5 @@ header{height:40px;display:flex;align-items:center;gap:14px;padding:0 14px;
 .lw-url{cursor:text;max-width:260px}
 .lw-nav,.lw-ext{text-decoration:none;display:inline-flex;align-items:center}
 .sp-web{color:var(--green)}
+.sp-newdir{color:rgba(0,245,255,.55);font-size:10px}
+.sp-newdir:hover{color:var(--cyan)}
