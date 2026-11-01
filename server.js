@@ -515,6 +515,7 @@ function latestTranscript(cwd) {
   return best;
 }
 
+const FIRST_READ_CAP = 8 * 1024 * 1024; // primera lectura de un transcript: máximo 8 MB (la cola)
 // Read usage incrementally: only parse bytes appended since last poll.
 function readClaudeUsage(session) {
   const file = latestTranscript(session.cwd);
@@ -522,7 +523,10 @@ function readClaudeUsage(session) {
   let st; try { st = fs.statSync(file); } catch { return null; }
   let c = usageCache.get(file);
   if (!c || c.ino !== st.ino || st.size < c.size) {
-    c = { ino: st.ino, size: 0, leftover: '',
+    // Transcripts de cientos de MB: leerlos enteros congela el servidor. La
+    // primera vez solo se toma la cola; lo anterior no cambia lo que se muestra.
+    const skip = Math.max(0, st.size - FIRST_READ_CAP);
+    c = { ino: st.ino, size: skip, leftover: '', partial: skip > 0,
           totals: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, turns: 0 },
           latest: { context: 0, model: '' } };
     usageCache.set(file, c);
@@ -534,6 +538,7 @@ function readClaudeUsage(session) {
     try { fs.readSync(fd, buf, 0, len, c.size); } finally { fs.closeSync(fd); }
     c.size = st.size;
     const lines = (c.leftover + buf.toString('utf8')).split('\n');
+    if (c.partial) { lines.shift(); c.partial = false; } // se entró a mitad de línea
     c.leftover = lines.pop(); // trailing partial line, completed on next read
     for (const line of lines) {
       if (!line.trim()) continue;
@@ -1051,7 +1056,8 @@ function ingestTranscript(file) {
   let st; try { st = fs.statSync(file); } catch { return; }
   let c = windowCache.get(file);
   if (!c || c.ino !== st.ino || st.size < c.size) {
-    c = { ino: st.ino, size: 0, leftover: '' };
+    const skip = Math.max(0, st.size - FIRST_READ_CAP); // archivos gigantes: solo la cola
+    c = { ino: st.ino, size: skip, leftover: '', partial: skip > 0 };
     windowCache.set(file, c);
   }
   if (st.size <= c.size) return;
@@ -1061,6 +1067,7 @@ function ingestTranscript(file) {
   try { fs.readSync(fd, buf, 0, len, c.size); } finally { fs.closeSync(fd); }
   c.size = st.size;
   const lines = (c.leftover + buf.toString('utf8')).split('\n');
+  if (c.partial) { lines.shift(); c.partial = false; }
   c.leftover = lines.pop();
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -1834,6 +1841,7 @@ wss.on('connection', (ws) => {
 
 push.init();
 
+server.on('error', e => { console.error('[server]', e.message); if (e.code === 'EADDRINUSE') process.exit(1); });
 server.listen(PORT, HOST, () => {
   console.log(`CladeManager running → http://localhost:${PORT}`);
   console.log(HOST === '127.0.0.1' || HOST === 'localhost'
