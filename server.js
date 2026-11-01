@@ -87,6 +87,13 @@ function saveWsStoreSrv(store) {
   return true;
 }
 
+// ── Paneles web: Chromium compartido en el servidor (lib/live.js) ───
+const { LiveManager } = require('./lib/live');
+const liveMgr = new LiveManager({
+  profilesDir: path.join(DATA_DIR, 'browsers'),
+  send: (ws, m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); },
+});
+
 // ── STATS: historial de consumo + precios para el "valor API equivalente" ─
 const stats = require('./lib/stats');
 stats.init(DATA_DIR);
@@ -451,6 +458,7 @@ function closeSession(id) {
   const s = sessions.get(id);
   if (!s) return;
   try { s.proc && s.proc.kill(); } catch {}
+  liveMgr.destroy(id);
   const p = pending.get(id);
   if (p && p.timer) clearTimeout(p.timer);
   pending.delete(id);
@@ -1220,6 +1228,11 @@ function getOfficialUsage(force, cb) {
 // Boot pre-configured sessions (only if configured)
 if (isConfigured()) {
   for (const cfg of (config.sessions || [])) {
+    if (cfg.kind === 'web') { // panel web: sin pty, su navegador se abre al verlo
+      sessions.set(cfg.id, { ...cfg, proc: null, status: 'running' });
+      liveMgr.register(cfg.id, cfg.url);
+      continue;
+    }
     buffers.set(cfg.id, []);
     spawnSession(cfg);
   }
@@ -1421,7 +1434,8 @@ wss.on('connection', (ws) => {
     } else if (type === 'list') {
       const list = [];
       for (const [id, s] of sessions)
-        list.push({ id, name: s.name, cwd: s.cwd, status: s.status, cols: s.cols || 80, rows: s.rows || 24, subtitle: s.subtitle || '', voice: s.voice || '' });
+        list.push({ id, name: s.name, cwd: s.cwd, status: s.status, cols: s.cols || 80, rows: s.rows || 24, subtitle: s.subtitle || '', voice: s.voice || '',
+          kind: s.kind || 'pty', url: s.url || '' });
       ws.send(JSON.stringify({ type: 'sessions', sessions: list }));
       for (const [id, buf] of buffers)
         if (buf.length) ws.send(JSON.stringify({ type: 'output', sessionId: id, data: buf.join('') }));
@@ -1685,6 +1699,36 @@ wss.on('connection', (ws) => {
           scanMs: Date.now() - t0 }));
       });
 
+    } else if (type === 'open-web') {
+      // Panel web nuevo: una sesión sin pty cuyo "proceso" es una pestaña de Chromium
+      const url = String(msg.url || '').trim();
+      if (!/^https?:\/\//i.test(url)) return;
+      const avail = liveMgr.availability();
+      if (!avail.ok) { ws.send(JSON.stringify({ type: 'error', msg: 'Paneles web: ' + avail.error })); return; }
+      const id = 'web_' + Date.now();
+      const name = String(msg.name || url.replace(/^https?:\/\//, '').split('/')[0]).slice(0, 40);
+      const cfg = { id, kind: 'web', name, url, cwd: require('os').homedir(), command: '', args: [] };
+      sessions.set(id, { ...cfg, proc: null, status: 'running' });
+      liveMgr.register(id, url);
+      if (!config.sessions) config.sessions = [];
+      config.sessions.push(cfg);
+      saveConfig();
+      broadcast({ type: 'session-added', session: { id, name, kind: 'web', url, cwd: cfg.cwd, status: 'running' } });
+
+    } else if (type === 'live-open') {
+      if (sessions.has(sessionId)) liveMgr.open(ws, msg);
+
+    } else if (type === 'live-mouse' || type === 'live-key' || type === 'live-text' || type === 'live-nav') {
+      if (sessions.has(sessionId)) liveMgr.input(ws, msg);
+
+    } else if (type === 'save-web-url') {
+      const s = sessions.get(sessionId);
+      if (s && s.kind === 'web' && /^https?:\/\//i.test(msg.url || '')) {
+        s.url = msg.url;
+        const saved = (config.sessions || []).find(c => c.id === sessionId);
+        if (saved) { saved.url = msg.url; saveConfig(); }
+      }
+
     } else if (type === 'save-ws-store') {
       saveWsStoreSrv(msg.store);
 
@@ -1780,8 +1824,8 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => { clients.delete(ws); stopResponseWatch(ws, false); dictations.delete(ws); });
-  ws.on('error', () => { clients.delete(ws); stopResponseWatch(ws, false); dictations.delete(ws); });
+  ws.on('close', () => { clients.delete(ws); stopResponseWatch(ws, false); dictations.delete(ws); liveMgr.disown(ws); });
+  ws.on('error', () => { clients.delete(ws); stopResponseWatch(ws, false); dictations.delete(ws); liveMgr.disown(ws); });
 });
 
 push.init();

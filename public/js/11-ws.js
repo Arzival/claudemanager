@@ -117,7 +117,7 @@ ws.addEventListener('message', ev => {
     delete gitInfo[msg.sessionId];
     delete cmdTrack[msg.sessionId]; delete cmdShellOk[msg.sessionId];
     delete cmdMatchCache[msg.sessionId]; delete cmdSel[msg.sessionId];
-    delete voiceByS[msg.sessionId];
+    delete voiceByS[msg.sessionId]; delete webPanels[msg.sessionId];
     if (voiceReading && voiceReading.id === msg.sessionId) voiceReading = null;
     if (voiceActive && voiceActive.id === msg.sessionId) voiceActive = null;
     stopEngineSpeech(msg.sessionId);
@@ -277,6 +277,12 @@ ws.addEventListener('message', ev => {
   } else if (msg.type === 'backgrounds') {
     backgrounds = msg.files || [];
     if (bgOv.classList.contains('open')) renderBgGrid();
+
+  } else if (msg.type === 'live-frame') {
+    liveOnFrame(msg);
+
+  } else if (msg.type === 'live-status') {
+    liveOnStatus(msg);
 
   } else if (msg.type === 'ws-store') {
     applyServerWsStore(msg.store); // llega antes de 'sessions', que construye los paneles con él

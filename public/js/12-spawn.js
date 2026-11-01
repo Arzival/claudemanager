@@ -50,6 +50,10 @@ function renderSpawnMenu() {
     (spawnCtx.size
       ? `<div class="vm-item sp-ctx-clear" title="Clic para quitar todo el contexto">📎 ctx: ${escHtml([...spawnCtx.values()].join(', '))} ✕</div>`
       : '') +
+    // Paneles web: un navegador real dentro del tablero (claude.ai, codex…)
+    `<div class="vm-hdr">🌐 PANEL WEB</div>` +
+    WEB_PRESETS.map(p => `<div class="vm-item sp-web" data-url="${escHtml(p.url)}" data-name="${escHtml(p.name)}">${escHtml(p.name)}</div>`).join('') +
+    `<div class="vm-item sp-web" data-url="" data-name="">Otra URL…</div>` +
     (!projectData.length
       ? '<div class="vm-hdr">cargando proyectos…</div>'
       : projectData.map(t =>
@@ -121,6 +125,15 @@ gridWrap.addEventListener('contextmenu', e => {
     if (opt) { // toggle de opción — el menú sigue abierto
       spawnPrefs[opt.dataset.o] = !spawnPrefs[opt.dataset.o];
       renderSpawnMenu();
+      return;
+    }
+    const web = ev.target.closest('.sp-web');
+    if (web) {
+      let url = web.dataset.url, name = web.dataset.name;
+      if (!url) { url = prompt('URL del panel web:', 'https://'); if (!url || !/^https?:\/\//i.test(url)) return; name = ''; }
+      ws.send(JSON.stringify({ type: 'open-web', url, name }));
+      vToast(`🌐 abriendo ${name || url}…`);
+      closeSpawnMenu();
       return;
     }
     const proj = ev.target.closest('.sp-proj');

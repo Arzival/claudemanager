@@ -2,6 +2,7 @@
 // Script clásico: comparte scope global con los demás; el orden de carga importa.
 // ── Build panel ───────────────────────────────────────────────
 function buildPanel(s, lay) {
+  if (s.kind === 'web') return buildWebPanel(s, lay); // navegador real, ver 15-web.js
   lay = getSavedLayout(s.id) || lay;
   panelCount++;
   const panel = document.createElement('div');

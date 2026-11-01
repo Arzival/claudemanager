@@ -123,6 +123,28 @@ El layout se guarda automáticamente en `localStorage` — al recargar o reinici
 | Escribir a la IA | Escribe directamente en el panel |
 | Limpiar el panel localmente | **Ctrl + K** |
 
+## Paneles web 🌐 — claude.ai, Codex web o cualquier IA dentro del tablero
+
+Un panel web es un **navegador real** dentro del dashboard: ahí entras a claude.ai (para tus sesiones de Remote Control en otras máquinas), a chatgpt.com/codex, Gemini o la URL que quieras, con login normal y todas las que necesites a la vez. Se mueven, redimensionan y guardan por workspace como cualquier terminal.
+
+- **Abrir uno**: clic derecho en el tablero → sección **🌐 PANEL WEB** (presets de Claude, ChatGPT/Codex y Gemini, u **Otra URL…**).
+- **Dentro del panel**: clic, rueda, teclado y pegar (Cmd/Ctrl+V) van a la página. Botones ← ⟳ en la cabecera, ↗ abre la misma página en tu navegador y doble clic en la URL la cambia.
+- **Dictado por voz**: funciona igual que con las consolas — "claude, revisa el PR" escribe en el chat de ese panel y manda Enter. (No hay lectura de respuestas: no existe transcript, solo pantalla.)
+- **Los logins se conservan** entre reinicios y entre sueños del panel (`~/.claudemanager/browsers/`). Al cerrar el panel se borran.
+
+### Cómo funciona y cuánto consume
+
+No es un iframe (claude.ai y ChatGPT los prohíben y las cookies no funcionarían): el servidor corre **un solo Chromium headless** y manda la imagen al dashboard por WebSocket (screencast JPEG vía Chrome DevTools Protocol), devolviendo tus clics y teclas. Por eso funciona desde cualquier navegador y desde el móvil.
+
+- Cada panel es una pestaña aislada del mismo Chromium: ~100–150 MB cada una en vez de ~400 MB por navegador separado.
+- Solo se transmite imagen del panel **visible**; los paneles de workspaces ocultos no mandan nada.
+- Un panel que lleva **15 min sin verse se duerme** (se cierra su pestaña, memoria casi cero) y se despierta solo en ~3 s al mostrarlo, con el login intacto. Ajustable con `LIVE_SLEEP_MINUTES` en el entorno del servicio.
+- Dentro del Chromium se bloquean vídeos y fuentes externas.
+
+### Requisito: un Chrome/Chromium en la máquina
+
+Se usa, en este orden: `CHROMIUM_PATH` (si lo defines), el Chromium de Playwright si existe, o el Chrome/Chromium/Brave/Edge instalado. En macOS con Chrome instalado no hay que hacer nada. En Linux: `sudo apt install chromium` (o `npx playwright-core install chromium`). Si no hay ninguno, el panel lo avisa al abrirlo.
+
 ## Sugerencias de comandos (shells)
 
 En sesiones cuyo proceso en primer plano es un shell (bash/zsh/ssh — nunca dentro de Claude u otra TUI), el dashboard **aprende los comandos que ejecutas** en una lista global compartida entre proyectos. Al escribir 2+ caracteres aparece una caja con coincidencias: `↑↓` elige, `Enter` ejecuta, `Tab` solo completa, `Esc` cierra, clic inserta y clic derecho borra la entrada. No registra líneas en prompts de contraseña ni líneas que empiecen con espacio.
