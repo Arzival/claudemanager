@@ -1722,7 +1722,7 @@ wss.on('connection', (ws) => {
     } else if (type === 'live-open') {
       if (sessions.has(sessionId)) liveMgr.open(ws, msg);
 
-    } else if (type === 'live-mouse' || type === 'live-key' || type === 'live-text' || type === 'live-nav') {
+    } else if (type === 'live-mouse' || type === 'live-key' || type === 'live-text' || type === 'live-nav' || type === 'live-login') {
       if (sessions.has(sessionId)) liveMgr.input(ws, msg);
 
     } else if (type === 'save-web-url') {
