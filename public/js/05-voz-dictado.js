@@ -253,7 +253,7 @@ sbMic.addEventListener('contextmenu', e => {
 const sbVoiceWin = document.getElementById('sb-voice-win');
 setInterval(() => {
   const win = voiceWindowMin();
-  if (!voiceActive || win <= 0 || !(terms[voiceActive.id] || webPanels[voiceActive.id])) { sbVoiceWin.style.display = 'none'; return; }
+  if (!voiceActive || win <= 0 || !terms[voiceActive.id]) { sbVoiceWin.style.display = 'none'; return; }
   const left = win * 60000 - (Date.now() - voiceActive.at);
   if (left <= 0) { sbVoiceWin.style.display = 'none'; return; }
   const mm = Math.floor(left / 60000), ss = Math.floor((left % 60000) / 1000);
@@ -395,7 +395,7 @@ function routeVoiceText(raw) {
     // Sin nombre reconocido → «panel activo»: continúa la conversación con el
     // último panel usado, si la ventana deslizante sigue viva.
     const win = voiceWindowMin();
-    if (win > 0 && voiceActive && Date.now() - voiceActive.at < win * 60000 && (terms[voiceActive.id] || webPanels[voiceActive.id])) {
+    if (win > 0 && voiceActive && Date.now() - voiceActive.at < win * 60000 && terms[voiceActive.id]) {
       const prompt = words.join(' ').replace(/^[\s,.:;¿?¡!—-]+/, '').trim();
       if (!prompt) { vToast('no se entendió nada'); return; }
       voicePendingSend = {
@@ -439,12 +439,6 @@ function routeVoiceText(raw) {
 }
 
 function sendVoicePrompt(id, nm, prompt) {
-  if (webPanels[id]) { // panel web: el texto va al chat de la página + Enter
-    voiceActive = { id, nm, at: Date.now() };
-    liveType(id, prompt, true);
-    vToast(`✓ enviado a ${nm} (web)`);
-    return;
-  }
   if (!terms[id]) { vToast('esa consola ya no existe'); return; }
   voiceActive = { id, nm, at: Date.now() }; // cada envío renueva la ventana
   // El Enter va aparte y con pausa: si llega pegado al texto, Claude lo trata

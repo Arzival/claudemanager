@@ -87,17 +87,6 @@ function saveWsStoreSrv(store) {
   return true;
 }
 
-// ── Paneles web: Chromium compartido en el servidor (lib/live.js) ───
-const { LiveManager } = require('./lib/live');
-const liveMgr = new LiveManager({
-  profilesDir: path.join(DATA_DIR, 'browsers'),
-  send: (ws, m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); },
-});
-
-for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { // guarda logins de paneles web antes de morir
-  Promise.race([liveMgr.shutdown(), new Promise(r => setTimeout(r, 3000))]).finally(() => process.exit(0));
-});
-
 // ── STATS: historial de consumo + precios para el "valor API equivalente" ─
 const stats = require('./lib/stats');
 stats.init(DATA_DIR);
@@ -462,7 +451,6 @@ function closeSession(id) {
   const s = sessions.get(id);
   if (!s) return;
   try { s.proc && s.proc.kill(); } catch {}
-  liveMgr.destroy(id);
   const p = pending.get(id);
   if (p && p.timer) clearTimeout(p.timer);
   pending.delete(id);
@@ -515,7 +503,7 @@ function latestTranscript(cwd) {
   return best;
 }
 
-const FIRST_READ_CAP = 8 * 1024 * 1024; // primera lectura de un transcript: máximo 8 MB (la cola)
+const FIRST_READ_CAP = 8 * 1024 * 1024; // primera lectura de un transcript: solo la cola
 // Read usage incrementally: only parse bytes appended since last poll.
 function readClaudeUsage(session) {
   const file = latestTranscript(session.cwd);
@@ -523,8 +511,6 @@ function readClaudeUsage(session) {
   let st; try { st = fs.statSync(file); } catch { return null; }
   let c = usageCache.get(file);
   if (!c || c.ino !== st.ino || st.size < c.size) {
-    // Transcripts de cientos de MB: leerlos enteros congela el servidor. La
-    // primera vez solo se toma la cola; lo anterior no cambia lo que se muestra.
     const skip = Math.max(0, st.size - FIRST_READ_CAP);
     c = { ino: st.ino, size: skip, leftover: '', partial: skip > 0,
           totals: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, turns: 0 },
@@ -538,7 +524,7 @@ function readClaudeUsage(session) {
     try { fs.readSync(fd, buf, 0, len, c.size); } finally { fs.closeSync(fd); }
     c.size = st.size;
     const lines = (c.leftover + buf.toString('utf8')).split('\n');
-    if (c.partial) { lines.shift(); c.partial = false; } // se entró a mitad de línea
+    if (c.partial) { lines.shift(); c.partial = false; }
     c.leftover = lines.pop(); // trailing partial line, completed on next read
     for (const line of lines) {
       if (!line.trim()) continue;
@@ -1056,7 +1042,7 @@ function ingestTranscript(file) {
   let st; try { st = fs.statSync(file); } catch { return; }
   let c = windowCache.get(file);
   if (!c || c.ino !== st.ino || st.size < c.size) {
-    const skip = Math.max(0, st.size - FIRST_READ_CAP); // archivos gigantes: solo la cola
+    const skip = Math.max(0, st.size - FIRST_READ_CAP);
     c = { ino: st.ino, size: skip, leftover: '', partial: skip > 0 };
     windowCache.set(file, c);
   }
@@ -1239,11 +1225,6 @@ function getOfficialUsage(force, cb) {
 // Boot pre-configured sessions (only if configured)
 if (isConfigured()) {
   for (const cfg of (config.sessions || [])) {
-    if (cfg.kind === 'web') { // panel web: sin pty, su navegador se abre al verlo
-      sessions.set(cfg.id, { ...cfg, proc: null, status: 'running' });
-      liveMgr.register(cfg.id, cfg.url);
-      continue;
-    }
     buffers.set(cfg.id, []);
     spawnSession(cfg);
   }
@@ -1445,8 +1426,7 @@ wss.on('connection', (ws) => {
     } else if (type === 'list') {
       const list = [];
       for (const [id, s] of sessions)
-        list.push({ id, name: s.name, cwd: s.cwd, status: s.status, cols: s.cols || 80, rows: s.rows || 24, subtitle: s.subtitle || '', voice: s.voice || '',
-          kind: s.kind || 'pty', url: s.url || '' });
+        list.push({ id, name: s.name, cwd: s.cwd, status: s.status, cols: s.cols || 80, rows: s.rows || 24, subtitle: s.subtitle || '', voice: s.voice || '' });
       ws.send(JSON.stringify({ type: 'sessions', sessions: list }));
       for (const [id, buf] of buffers)
         if (buf.length) ws.send(JSON.stringify({ type: 'output', sessionId: id, data: buf.join('') }));
@@ -1505,7 +1485,7 @@ wss.on('connection', (ws) => {
       const folderPath = path.join(config.projectsRoot, tech, name.trim());
       try {
         fs.mkdirSync(folderPath, { recursive: true });
-        broadcast({ type: 'projects', data: scanProjects() }); // todos los navegadores ven la carpeta nueva
+        broadcast({ type: 'projects', data: scanProjects() });
         ws.send(JSON.stringify({ type: 'folder-created', tech, name: name.trim() }));
       } catch (err) {
         ws.send(JSON.stringify({ type: 'error', msg: err.message }));
@@ -1710,36 +1690,6 @@ wss.on('connection', (ws) => {
           scanMs: Date.now() - t0 }));
       });
 
-    } else if (type === 'open-web') {
-      // Panel web nuevo: una sesión sin pty cuyo "proceso" es una pestaña de Chromium
-      const url = String(msg.url || '').trim();
-      if (!/^https?:\/\//i.test(url)) return;
-      const avail = liveMgr.availability();
-      if (!avail.ok) { ws.send(JSON.stringify({ type: 'error', msg: 'Paneles web: ' + avail.error })); return; }
-      const id = 'web_' + Date.now();
-      const name = String(msg.name || url.replace(/^https?:\/\//, '').split('/')[0]).slice(0, 40);
-      const cfg = { id, kind: 'web', name, url, cwd: require('os').homedir(), command: '', args: [] };
-      sessions.set(id, { ...cfg, proc: null, status: 'running' });
-      liveMgr.register(id, url);
-      if (!config.sessions) config.sessions = [];
-      config.sessions.push(cfg);
-      saveConfig();
-      broadcast({ type: 'session-added', session: { id, name, kind: 'web', url, cwd: cfg.cwd, status: 'running' } });
-
-    } else if (type === 'live-open') {
-      if (sessions.has(sessionId)) liveMgr.open(ws, msg);
-
-    } else if (type === 'live-mouse' || type === 'live-key' || type === 'live-text' || type === 'live-nav') {
-      if (sessions.has(sessionId)) liveMgr.input(ws, msg);
-
-    } else if (type === 'save-web-url') {
-      const s = sessions.get(sessionId);
-      if (s && s.kind === 'web' && /^https?:\/\//i.test(msg.url || '')) {
-        s.url = msg.url;
-        const saved = (config.sessions || []).find(c => c.id === sessionId);
-        if (saved) { saved.url = msg.url; saveConfig(); }
-      }
-
     } else if (type === 'save-ws-store') {
       saveWsStoreSrv(msg.store);
 
@@ -1835,8 +1785,8 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => { clients.delete(ws); stopResponseWatch(ws, false); dictations.delete(ws); liveMgr.disown(ws); });
-  ws.on('error', () => { clients.delete(ws); stopResponseWatch(ws, false); dictations.delete(ws); liveMgr.disown(ws); });
+  ws.on('close', () => { clients.delete(ws); stopResponseWatch(ws, false); dictations.delete(ws); });
+  ws.on('error', () => { clients.delete(ws); stopResponseWatch(ws, false); dictations.delete(ws); });
 });
 
 push.init();
