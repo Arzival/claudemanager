@@ -25,7 +25,6 @@ function buildWebPanel(s, lay) {
       <span class="ph-sep">·</span>
       <span class="ph-sub">${s.subtitle ? escHtml(s.subtitle) : ''}</span>
       <span class="ph-cwd lw-url" title="Doble clic para cambiar la URL">${escHtml(s.url || '')}</span>
-      <button class="pbtn lw-login" title="Login en ventana: abre tu Chrome real en la máquina del servidor para entrar con Touch ID / passkey; al cerrarla el panel sigue con la sesión">🔐</button>
       <button class="pbtn lw-nav" data-a="back" title="Atrás">←</button>
       <button class="pbtn lw-nav" data-a="reload" title="Recargar">⟳</button>
       <a class="pbtn lw-ext" href="${escHtml(s.url || '#')}" target="_blank" rel="noreferrer" title="Abrir en el navegador">↗</a>
@@ -80,11 +79,6 @@ function buildWebPanel(s, lay) {
     e.stopPropagation();
     ws.send(JSON.stringify({ type: 'live-nav', sessionId: s.id, action: b.dataset.a }));
   }));
-  panel.querySelector('.lw-login').addEventListener('click', e => {
-    e.stopPropagation();
-    ws.send(JSON.stringify({ type: 'live-login', sessionId: s.id }));
-    vToast('🔐 abriendo ventana de login en la máquina del servidor…');
-  });
   W.urlEl.addEventListener('dblclick', e => {
     e.stopPropagation();
     const url = prompt('URL del panel:', W.url || 'https://');
@@ -195,7 +189,6 @@ function liveOnFrame(msg) {
 const LIVE_TEXT = {
   launching: 'Abriendo navegador…',
   sleeping: 'Dormido para ahorrar memoria — se despierta solo al verlo',
-  login: 'Ventana de login abierta en la máquina del servidor — entra ahí y ciérrala al terminar',
   error: 'No se pudo abrir el navegador',
 };
 function liveOnStatus(msg) {

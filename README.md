@@ -133,7 +133,7 @@ Un panel web es un **navegador real** dentro del dashboard: ahí entras a claude
 - **Dentro del panel**: clic, rueda, teclado y pegar (Cmd/Ctrl+V) van a la página. Botones ← ⟳ en la cabecera, ↗ abre la misma página en tu navegador y doble clic en la URL la cambia.
 - **Dictado por voz**: funciona igual que con las consolas — "claude, revisa el PR" escribe en el chat de ese panel y manda Enter. (No hay lectura de respuestas: no existe transcript, solo pantalla.)
 - **Los logins se conservan** entre reinicios y entre sueños del panel (`~/.claudemanager/browsers/`). Al cerrar el panel se borran.
-- **Login con Touch ID / passkey (Google, etc.)**: el panel es headless y no puede mostrar el diálogo de huella. El botón **🔐** abre tu Chrome real *en la máquina del servidor* con las cookies de ese panel: entras ahí como siempre, cierras la ventana y el panel sigue con la sesión. Con claude.ai también puedes evitarlo entrando con **email + código**. Google a veces bloquea navegadores lanzados por automatización; si pasa, usa el método por email.
+- **Login con Google (Touch ID / passkey)**: no funciona dentro del panel (es headless, no puede mostrar el diálogo de huella). Entra a claude.ai con **email + código**.
 
 ### Cómo funciona y cuánto consume
 
